@@ -322,19 +322,39 @@ export function splitBar(el, { left, right, label }) {
   el.appendChild(bar);
 }
 
-// Tiny line with a soft area, no axes. points: numbers in order.
-export function sparkline(el, { values, color = 'pos', height = 40 }) {
+// Tiny line with a soft area, no axes. values: numbers in order.
+// `bleed` draws edge to edge as a card background: thinned to ~48 points,
+// smoothed, and filled with a fade toward the bottom.
+export function sparkline(el, { values, color = 'pos', height = 40, bleed = false }) {
   el.replaceChildren();
   if (values.length < 2) return;
+  let vals = values;
+  if (bleed && vals.length > 48) {
+    const step = (vals.length - 1) / 47;
+    vals = Array.from({ length: 48 }, (_, i) => values[Math.round(i * step)]);
+  }
   responsive(el, (width, fresh) => {
     el.replaceChildren();
-    const lo = Math.min(...values), hi = Math.max(...values);
-    const x = i => 2 + (i / (values.length - 1)) * (width - 4);
-    const y = v => height - 3 - ((v - lo) / (hi - lo || 1)) * (height - 6);
-    const svg = svgEl('svg', { width, height, viewBox: `0 0 ${width} ${height}`, 'aria-hidden': 'true' });
-    const d = values.map((v, i) => `${i ? 'L' : 'M'}${x(i)},${y(v)}`).join('');
-    svg.appendChild(svgEl('path', { d: `${d}L${x(values.length - 1)},${height}L${x(0)},${height}Z`, class: 'area ' + color + (fresh ? ' fade-in' : '') }));
-    svg.appendChild(svgEl('path', { d, class: 'line glow ' + color + (fresh ? ' draw' : ''), pathLength: 1 }));
+    const h = bleed ? el.clientHeight || height : height;
+    const lo = Math.min(...vals), hi = Math.max(...vals);
+    const pad = bleed ? 0 : 2, top = bleed ? h * 0.12 : 3, bottom = bleed ? 6 : 3;
+    const x = i => pad + (i / (vals.length - 1)) * (width - 2 * pad);
+    const y = v => h - bottom - ((v - lo) / (hi - lo || 1)) * (h - top - bottom);
+    const pts = vals.map((v, i) => [x(i), y(v)]);
+    const svg = svgEl('svg', { width, height: h, viewBox: `0 0 ${width} ${h}`, 'aria-hidden': 'true', preserveAspectRatio: 'none' });
+    const d = bleed ? monotonePath(pts) : pts.map((p, i) => `${i ? 'L' : 'M'}${p[0]},${p[1]}`).join('');
+    let fill = null;
+    if (bleed) {
+      const id = 'sf' + Math.random().toString(36).slice(2, 8);
+      const g = svgEl('linearGradient', { id, x1: 0, y1: 0, x2: 0, y2: 1 });
+      g.append(svgEl('stop', { offset: 0, class: 'spark-stop', 'stop-opacity': .32 }), svgEl('stop', { offset: 1, class: 'spark-stop', 'stop-opacity': 0 }));
+      const defs = svgEl('defs'); defs.appendChild(g); svg.appendChild(defs);
+      fill = `url(#${id})`;
+    }
+    const area = svgEl('path', { d: `${d}L${x(vals.length - 1)},${h}L${x(0)},${h}Z`, class: (bleed ? 'spark-fill ' : 'area ') + color + (fresh ? ' fade-in' : '') });
+    if (fill) area.setAttribute('fill', fill);
+    svg.appendChild(area);
+    svg.appendChild(svgEl('path', { d, class: 'line glow ' + color + (bleed ? ' spark-line' : '') + (fresh ? ' draw' : ''), pathLength: 1 }));
     el.appendChild(svg);
   });
 }

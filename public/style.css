@@ -627,3 +627,15 @@ table.compact-rows th, table.compact-rows td { padding: 6px 8px; }
 .pw-input { width: 100%; border: 1px solid var(--ring); background: var(--card-2); border-radius: 8px; padding: 9px 11px; font: inherit; color: var(--ink); margin-top: 6px; }
 .pw-input:focus { outline: none; border-color: color-mix(in srgb, var(--accent) 60%, transparent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 16%, transparent); }
 @media (max-width: 860px) { .side-label-gap, #serverState { display: none; } }
+
+/* Net P&L: the equity curve fills the card behind the text */
+.stat.hero { position: relative; overflow: hidden; isolation: isolate; grid-template-columns: minmax(0, 1fr); min-height: 88px; }
+.stat.hero .stat-text { position: relative; z-index: 1; }
+.net-bg { position: absolute; left: 0; right: 0; bottom: 0; height: 68%; z-index: 0; pointer-events: none; }
+.net-bg svg { display: block; width: 100%; height: 100%; }
+.spark-stop { stop-color: var(--a1); }
+.spark-line { stroke-width: 2; opacity: .9; }
+.spark-fill { opacity: 1; }
+/* text stays crisp where the curve runs under it: a soft halo in the card's own color */
+.stat.hero .stat-text > * { text-shadow: 0 0 3px var(--hero), 0 0 8px var(--hero), 0 0 14px var(--hero); }
+:root[data-theme="light"] .stat.hero .stat-text > * { --halo: color-mix(in srgb, var(--a1) 8%, #ffffff); text-shadow: 0 0 3px var(--halo), 0 0 8px var(--halo), 0 0 14px var(--halo); }

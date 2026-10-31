@@ -430,7 +430,7 @@ function renderDashboard(trades, s, from, to) {
   $('#netMark').className = 'mark-glyph ' + (s.net >= 0 ? 'pos' : 'neg');
   $('#netMark').textContent = s.n ? (s.net >= 0 ? '▲' : '▼') : '';
   $('#netSub').textContent = s.n ? `${s.n.toLocaleString()} trade${s.n === 1 ? '' : 's'} · ${money(s.expectancy)} each` : 'No trades';
-  sparkline($('#netSpark'), { values: s.n ? [0, ...s.equity.map(p => p.y)] : [], color: 'hero', height: 44 });
+  sparkline($('#netSpark'), { values: s.n ? [0, ...s.equity.map(p => p.y)] : [], color: 'hero', bleed: true });
 
   // trade win %: wins / breakeven / losses
   countTo($('#winValue'), s.winRate, v => pct(v, 1));
