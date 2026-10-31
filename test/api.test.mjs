@@ -1,0 +1,56 @@
+// The real server (same functions Vercel runs) against the mock Bybit.
+import { test, before, after } from 'node:test';
+import assert from 'node:assert/strict';
+import { spawn } from 'node:child_process';
+import { gzipSync, gunzipSync } from 'node:zlib';
+import fs from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+import { startMock, MOCK_KEY, MOCK_SECRET } from './mock-bybit.mjs';
+
+const PORT = 8097, BASE = `http://localhost:${PORT}`, PW = 'correct horse';
+let mock, app, dir;
+
+before(async () => {
+  mock = (await startMock({ port: 9996 })).server;
+  dir = await fs.mkdtemp(path.join(os.tmpdir(), 'perp-api-'));
+  app = spawn(process.execPath, ['server.mjs'], {
+    env: { ...process.env, PORT: String(PORT), PERP_DATA_DIR: dir, PERP_PASSWORD: PW, BLOB_READ_WRITE_TOKEN: '',
+      BYBIT_API_KEY: MOCK_KEY, BYBIT_API_SECRET: MOCK_SECRET, BYBIT_BASE_URL: 'http://127.0.0.1:9996' },
+    stdio: 'ignore',
+  });
+  for (let i = 0; i < 50; i++) { try { await fetch(BASE + '/'); break; } catch { await new Promise(r => setTimeout(r, 100)); } }
+});
+after(async () => { app.kill(); mock.close(); await fs.rm(dir, { recursive: true, force: true }); });
+
+const call = (p, opts = {}) => fetch(BASE + p, { ...opts, headers: { 'x-perp-key': PW, ...(opts.headers || {}) } });
+
+test('every API route needs the password', async () => {
+  for (const p of ['/api/status', '/api/account', '/api/pull?category=linear&start=0&end=1', '/api/snapshot']) {
+    const r = await fetch(BASE + p, { headers: { 'x-perp-key': 'nope' } });
+    assert.equal(r.status, 401, p);
+  }
+  const ok = await (await call('/api/status')).json();
+  assert.equal(ok.key.ok, true);
+  assert.equal(ok.storage, 'file');
+});
+
+test('pull returns one window and refuses longer ones', async () => {
+  const now = Date.now(), W = 7 * 86_400_000;
+  const r = await (await call(`/api/pull?category=linear&start=${now - W + 1}&end=${now}`)).json();
+  assert.ok(Array.isArray(r.rows) && Array.isArray(r.fills));
+  assert.ok(r.fills.every(f => f.id && f.o && f.t));
+  assert.equal((await call(`/api/pull?category=linear&start=${now - W - 1000}&end=${now}`)).status, 400);
+  assert.equal((await call(`/api/pull?category=spot&start=${now - 1000}&end=${now}`)).status, 400);
+});
+
+test('snapshot: nothing at first, then a gzip round trip; non-gzip is refused', async () => {
+  assert.equal((await call('/api/snapshot')).status, 404);
+  const snap = { app: 'perp-dojo', v: 1, savedAt: 1, cache: { raw: { a: 1 } }, journal: { '2026-10-14': { text: 'hi' } } };
+  const save = await call('/api/snapshot', { method: 'POST', headers: { 'content-type': 'application/octet-stream' }, body: gzipSync(JSON.stringify(snap)) });
+  assert.equal(save.status, 200);
+  const back = JSON.parse(gunzipSync(Buffer.from(await (await call('/api/snapshot')).arrayBuffer())));
+  assert.deepEqual(back, snap);
+  const bad = await call('/api/snapshot', { method: 'POST', headers: { 'content-type': 'application/octet-stream' }, body: '{"not":"gzip"}' });
+  assert.equal(bad.status, 400);
+});

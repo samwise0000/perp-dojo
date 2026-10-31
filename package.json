@@ -1,0 +1,18 @@
+{
+  "name": "perp-dojo",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Perp Dojo: a local trading report for Bybit perpetual futures, from a read-only API key.",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "start": "node --env-file-if-exists=.env server.mjs",
+    "test": "PERP_DATA_DIR=${TMPDIR:-/tmp}/perp-report-test node --test test/*.test.mjs",
+    "mock": "node test/mock-bybit.mjs"
+  },
+  "dependencies": {
+    "@vercel/blob": "^2.6.1"
+  }
+}

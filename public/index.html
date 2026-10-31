@@ -1,0 +1,396 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Perp Dojo</title>
+  <link rel="icon" href="logo.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="logo.png">
+  <link rel="stylesheet" href="style.css">
+  <script>try{var t=localStorage.getItem("perp-report:theme");t=t?JSON.parse(t):null;document.documentElement.dataset.theme=t||(matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light")}catch(e){document.documentElement.dataset.theme="dark"}</script>
+</head>
+<body>
+<div class="app">
+  <aside class="side">
+    <div class="logo"><img class="logo-mark" src="logo.png" alt="Perp Dojo logo" width="34" height="34"><span>Perp <b>Dojo</b></span></div>
+    <nav class="nav" aria-label="Views">
+      <button type="button" data-view="dashboard" aria-current="page"><svg viewBox="0 0 16 16" aria-hidden="true"><rect x="1.5" y="1.5" width="5" height="5" rx="1"/><rect x="9.5" y="1.5" width="5" height="5" rx="1"/><rect x="1.5" y="9.5" width="5" height="5" rx="1"/><rect x="9.5" y="9.5" width="5" height="5" rx="1"/></svg>Dashboard</button>
+      <button type="button" data-view="analytics"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2 14V8M6 14V3M10 14V6M14 14V10"/></svg>Analytics</button>
+      <button type="button" data-view="journal"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3.5 1.5h7l2 2v11h-9z"/><path d="M5.5 6h5M5.5 8.5h5M5.5 11h3"/></svg>Journal</button>
+      <button type="button" data-view="trades"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2 3.5h12M2 8h12M2 12.5h12"/></svg>Trades</button>
+    </nav>
+
+    <div class="side-section side-data">
+      <div class="side-label">Data</div>
+      <p id="coverage" class="side-text"></p>
+      <button id="pullBtn" class="btn primary block" type="button" hidden>Pull data…</button>
+      <button id="syncBtn" class="btn block" type="button" hidden>Refresh</button>
+      <p id="syncState" class="side-text"></p>
+      <div class="side-label side-label-gap">Server copy</div>
+      <div class="side-pair">
+        <button id="saveBtn" class="btn block save-btn" type="button" hidden title="Upload your trades and journal as one snapshot">Save to server</button>
+        <button id="loadBtn" class="btn block" type="button" hidden title="Replace this browser's data with the saved snapshot">Load</button>
+      </div>
+      <p id="serverState" class="side-text"></p>
+    </div>
+
+    <div class="side-foot">
+      <span id="account" class="side-text"></span>
+      <button id="themeBtn" class="icon-btn" type="button" title="Switch light / dark" aria-label="Switch light or dark theme">◐</button>
+    </div>
+  </aside>
+
+  <div class="main">
+    <div id="progress" class="progress" hidden><div></div></div>
+    <div id="alert" class="alert" role="alert" hidden></div>
+
+    <section id="setup" class="card setup" hidden>
+      <h1>Connect a read-only Bybit key</h1>
+      <p id="setupMsg" class="callout"></p>
+      <ol>
+        <li>In Bybit, open <b>Account → API → Create New Key</b> and choose <b>System-generated API Keys</b>.</li>
+        <li>Select <b>Read-Only</b>. Under Contract, tick <b>Orders</b> and <b>Positions</b>. Leave everything else off.</li>
+        <li>Binding your IP is optional. Without it, Bybit expires the key after 90 days.</li>
+        <li>Running locally: copy <code>.env.example</code> to <code>.env</code>, paste the key and secret, and restart with <code>npm start</code>.</li>
+        <li>On Vercel: add <code>BYBIT_API_KEY</code> and <code>BYBIT_API_SECRET</code> in the project's Environment Variables and redeploy.</li>
+      </ol>
+      <p class="muted">Only the server uses the key, never this page, and it refuses keys that can trade or withdraw.</p>
+      <button id="recheck" class="btn primary" type="button">Check again</button>
+    </section>
+
+    <section id="empty" class="card setup" hidden>
+      <h1>Pull your trade history</h1>
+      <p id="keyWarn" class="callout" hidden></p>
+      <p>Your key checks out as read-only. Pick the exact days to pull from Bybit. It keeps about two years of closed perp trades.</p>
+      <div class="row">
+        <button id="pullBtn2" class="btn primary" type="button">Choose dates…</button>
+        <button id="loadBtn2" class="btn" type="button">Load from server</button>
+      </div>
+      <p class="muted small">Using a new browser or computer? Load from server brings back the trades and journal you last saved.</p>
+    </section>
+
+    <div id="report" hidden>
+      <header class="head">
+        <div>
+          <h1 id="viewTitle">Dashboard</h1>
+          <p id="rangeText" class="muted"></p>
+        </div>
+        <div class="filters" role="toolbar" aria-label="Filters">
+          <button id="rangeBtn" class="btn" type="button" aria-haspopup="dialog"><svg viewBox="0 0 16 16" aria-hidden="true"><rect x="1.5" y="2.5" width="13" height="12" rx="2"/><path d="M1.5 6.5h13M5 1v3M11 1v3"/></svg><span id="rangeLabel">All time</span></button>
+          <select id="symbolFilter" aria-label="Market"></select>
+          <select id="sideFilter" aria-label="Side">
+            <option value="all">Longs and shorts</option>
+            <option value="Long">Longs only</option>
+            <option value="Short">Shorts only</option>
+          </select>
+        </div>
+      </header>
+
+      <!-- ===================== DASHBOARD ===================== -->
+      <section id="view-dashboard" class="grid">
+        <div class="stats c12">
+          <div class="card stat net-card hero">
+            <div class="stat-text">
+              <div class="kicker">Net P&amp;L <button class="info" type="button" data-info="Sum of every closed trade after fees and funding. Deposits and withdrawals aren't included.">i</button></div>
+              <div class="stat-value"><span id="netMark" class="mark-glyph" aria-hidden="true"></span><span id="netValue"></span></div>
+              <div id="netSub" class="muted small"></div>
+            </div>
+            <div id="netSpark" class="stat-viz spark-viz"></div>
+          </div>
+          <div class="card stat" style="--a: var(--a2)">
+            <div class="stat-text">
+              <div class="kicker">Trade win % <button class="info" type="button" data-info="Share of closed trades with positive net P&amp;L. Breakeven trades count as neither.">i</button></div>
+              <div id="winValue" class="stat-value"></div>
+            </div>
+            <div class="stat-viz"><div id="winGauge"></div><div id="winChips" class="chips"></div></div>
+          </div>
+          <div class="card stat" style="--a: var(--a3)">
+            <div class="stat-text">
+              <div class="kicker">Profit factor <button class="info" type="button" data-info="Gross wins ÷ gross losses. Above 1 means winners outweigh losers. The ring shows gross wins against gross losses.">i</button></div>
+              <div id="pfValue" class="stat-value"></div>
+              <div id="pfSub" class="muted small"></div>
+            </div>
+            <div class="stat-viz"><div id="pfDonut"></div></div>
+          </div>
+          <div class="card stat" style="--a: var(--a4)">
+            <div class="stat-text">
+              <div class="kicker">Day win % <button class="info" type="button" data-info="Share of trading days that closed with positive net P&amp;L. Flat days netted exactly zero.">i</button></div>
+              <div id="dayValue" class="stat-value"></div>
+            </div>
+            <div class="stat-viz"><div id="dayGauge"></div><div id="dayChips" class="chips"></div></div>
+          </div>
+          <div class="card stat col" style="--a: var(--a5)">
+            <div class="stat-text">
+              <div class="kicker">Avg win / loss <button class="info" type="button" data-info="Average winning trade ÷ average losing trade (the payoff ratio).">i</button></div>
+              <div id="payoffValue" class="stat-value"></div>
+            </div>
+            <div id="payoffBar"></div>
+            <div class="split-legend"><span><i class="key pos"></i><b id="avgWin"></b> win</span><span><i class="key neg"></i><b id="avgLoss"></b> loss</span></div>
+          </div>
+        </div>
+
+        <div id="warnings" class="warnings c12" role="status" aria-live="polite"></div>
+
+        <div class="card c12 cum-card accented" style="--a: var(--a1)">
+          <div class="card-row"><div class="kicker">Cumulative P&amp;L</div><div class="muted small">Net of fees and funding, by close time</div></div>
+          <div id="netChart" class="chart"></div>
+        </div>
+        <div class="card c8 calendar-card accented" style="--a: var(--a2)">
+          <div class="cal-head">
+            <div class="cal-nav">
+              <button id="calPrev" class="icon-btn" type="button" aria-label="Previous month">‹</button>
+              <h2 id="calTitle"></h2>
+              <button id="calNext" class="icon-btn" type="button" aria-label="Next month">›</button>
+              <button id="calToday" class="btn ghost small-btn" type="button">Today</button>
+            </div>
+            <dl id="calStats" class="cal-stats"></dl>
+          </div>
+          <div id="calendar" class="calendar" role="grid" aria-label="Daily P&amp;L calendar"></div>
+        </div>
+
+        <div class="stack c4">
+          <div class="card accented" style="--a: var(--a5)">
+            <div class="kicker">Account equity</div>
+            <div id="equityValue" class="mid-value"></div>
+            <div id="equitySub" class="muted small"></div>
+            <p id="equityNote" class="muted small equity-note" hidden>Equity moves with deposits and withdrawals. No trading stat uses it: they're all built from closed trades only.</p>
+          </div>
+          <div class="card accented" style="--a: var(--a3)">
+            <div class="kicker">Streaks</div>
+            <table class="streak-table">
+              <thead><tr><th></th><th scope="col">Days</th><th scope="col">Trades</th></tr></thead>
+              <tbody>
+                <tr><th scope="row">Current run</th><td id="stCurDays"></td><td id="stCurTrades"></td></tr>
+                <tr><th scope="row">Longest winning run</th><td id="stWinDays"></td><td id="stWinTrades"></td></tr>
+                <tr><th scope="row">Longest losing run</th><td id="stLossDays"></td><td id="stLossTrades"></td></tr>
+              </tbody>
+            </table>
+            <p class="muted small streak-note">A winning day is a day that closed with positive net P&amp;L. Days without trades don't break a run.</p>
+          </div>
+        </div>
+
+        <div class="card c4 score-card accented" style="--a: var(--a4)">
+          <div class="kicker">Trading score <button class="info" type="button" data-info="Six standard stats, each turned into 0–100 and averaged. Hover an axis for its formula. None of them use your balance.">i</button></div>
+          <div id="radar" class="chart"></div>
+          <div class="score-foot">
+            <div><div class="muted small">Your score</div><div id="scoreValue" class="score-value"></div></div>
+            <div id="scoreMeter" class="score-meter"></div>
+          </div>
+        </div>
+        <div class="stack c4">
+          <div class="card accented" style="--a: var(--a3)">
+            <div class="kicker" id="weekTitle">This week</div>
+            <div id="weekValue" class="mid-value"></div>
+            <div id="weekSub" class="muted small"></div>
+            <div id="weekChart" class="chart"></div>
+          </div>
+            <div class="card accented" style="--a: var(--a5)">
+            <div class="kicker">Best hour</div>
+            <div class="card-row"><div id="hourValue" class="mid-value"></div><div id="hourSub" class="muted small"></div></div>
+            <div id="hourStrip" class="hour-strip"></div>
+            <div class="hour-axis"><span>12am</span><span>6am</span><span>12pm</span><span>6pm</span><span>12am</span></div>
+          </div>
+        </div>
+        <div id="insightsCard" class="card c4 accented" style="--a: var(--a5)">
+          <div class="kicker">What stands out</div>
+          <ul id="insights" class="insights"></ul>
+        </div>
+        <div class="card c12 accented heat-card" style="--a: var(--a2)">
+          <div class="card-row"><div class="kicker" id="heatTitle">Last 12 months</div><div class="heat-legend"><span>Loss</span><i class="heat-neg-4"></i><i class="heat-neg-2"></i><i class="heat-zero"></i><i class="heat-pos-2"></i><i class="heat-pos-4"></i><span>Gain</span></div></div>
+          <div id="heatmap" class="heatmap"></div>
+        </div>
+
+        <div class="card c6 accented" style="--a: var(--a1)">
+          <div class="kicker">Performance</div>
+          <dl id="perfList" class="kv"></dl>
+        </div>
+        <div class="card c6 accented" style="--a: var(--a4)">
+          <div class="kicker">Risk</div>
+          <dl id="riskList" class="kv"></dl>
+        </div>
+      </section>
+
+      <!-- ===================== ANALYTICS ===================== -->
+      <section id="view-analytics" class="grid" hidden>
+        <div class="card c12">
+          <h2>Cumulative P&amp;L</h2>
+          <p class="sub">Net of fees and funding, stepped at each close</p>
+          <div id="equityChart" class="chart"></div>
+          <h3>Drawdown from peak</h3>
+          <div id="ddChart" class="chart"></div>
+        </div>
+        <div class="card c12">
+          <h2 id="periodTitle">Daily P&amp;L</h2>
+          <div id="periodChart" class="chart"></div>
+        </div>
+        <div class="card c6">
+          <h2>Net P&amp;L by market</h2>
+          <div id="symbolChart" class="chart"></div>
+        </div>
+        <div class="card c6">
+          <h2>Long vs short</h2>
+          <table id="sideTable" class="data compact"></table>
+        </div>
+        <div class="card c12">
+          <h2>Markets</h2>
+          <div class="table-wrap"><table id="symbolTable" class="data"></table></div>
+        </div>
+        <div class="card c6">
+          <h2>By weekday</h2>
+          <p class="sub">Net P&amp;L by the day a trade closed, in your local time</p>
+          <div id="weekdayChart" class="chart"></div>
+        </div>
+        <div class="card c6">
+          <h2>By hour of day</h2>
+          <p class="sub">Net P&amp;L by the hour a trade closed, in your local time</p>
+          <div id="hourChart" class="chart"></div>
+        </div>
+        <div class="card c12">
+          <h2>How your trades land</h2>
+          <p class="sub">Number of trades by net P&amp;L, extreme 1% at each end left out</p>
+          <div id="histChart" class="chart"></div>
+        </div>
+      </section>
+
+      <!-- ===================== JOURNAL ===================== -->
+      <section id="view-journal" class="grid" hidden>
+        <div class="stack c4">
+          <div class="card accented" style="--a: var(--a2)">
+            <div class="cal-head jr-cal-head">
+              <div class="cal-nav">
+                <button id="jrPrevMonth" class="icon-btn" type="button" aria-label="Previous month">‹</button>
+                <h2 id="jrMonthTitle"></h2>
+                <button id="jrNextMonth" class="icon-btn" type="button" aria-label="Next month">›</button>
+              </div>
+              <button id="jrToday" class="btn ghost small-btn" type="button">Today</button>
+            </div>
+            <div id="jrCalendar" class="jr-calendar" role="grid" aria-label="Journal calendar"></div>
+            <div class="jr-legend muted small"><span><i class="jr-dot"></i> Has an entry</span><span>Tint = that day's P&amp;L</span></div>
+          </div>
+          <div class="card accented" style="--a: var(--a5)">
+            <div class="kicker">Recent entries</div>
+            <ul id="jrRecent" class="jr-recent"></ul>
+          </div>
+        </div>
+
+        <div class="card c8 accented jr-editor" style="--a: var(--a1)">
+          <div class="jr-head">
+            <div>
+              <div class="kicker">Journal</div>
+              <h2 id="jrTitle"></h2>
+            </div>
+            <div class="jr-nav">
+              <button id="jrPrevDay" class="btn small-btn" type="button" aria-label="Previous day">‹ Prev</button>
+              <button id="jrNextDay" class="btn small-btn" type="button" aria-label="Next day">Next ›</button>
+              <button id="jrNextTraded" class="btn small-btn" type="button">Next day with trades</button>
+            </div>
+          </div>
+          <dl id="jrStats" class="cal-stats jr-stats"></dl>
+          <div id="jrTradesWrap" class="table-wrap"><table id="jrTrades" class="data compact-rows"></table></div>
+
+          <div class="jr-field">
+            <div class="card-row">
+              <label for="jrText" class="kicker">Entry</label>
+              <button id="jrTemplate" class="btn ghost small-btn" type="button">Insert template</button>
+            </div>
+            <textarea id="jrText" rows="10" placeholder="How did the day go? What did you plan, what actually happened, and what would you do differently?"></textarea>
+          </div>
+
+          <div class="jr-row">
+            <div class="jr-field">
+              <div class="kicker" id="jrRatingLabel">Discipline</div>
+              <div id="jrRating" class="jr-rating" role="radiogroup" aria-labelledby="jrRatingLabel"></div>
+            </div>
+            <div class="jr-field grow">
+              <label for="jrTagInput" class="kicker">Tags</label>
+              <div class="jr-tags"><span id="jrTags"></span><input id="jrTagInput" type="text" placeholder="Add a tag and press Enter" maxlength="32"></div>
+            </div>
+          </div>
+          <p id="jrSaved" class="muted small jr-saved">Saved in this browser only. Entries move to cloud storage once that's set up.</p>
+        </div>
+      </section>
+
+      <!-- ===================== TRADES ===================== -->
+      <section id="view-trades" class="grid" hidden>
+        <div class="card c12">
+          <div class="card-row">
+            <div><h2>Trades</h2><p id="tradeCount" class="sub"></p></div>
+            <button id="csvBtn" class="btn" type="button">Export CSV</button>
+          </div>
+          <div class="table-wrap"><table id="tradeTable" class="data"></table></div>
+          <button id="moreBtn" class="btn more" type="button" hidden></button>
+        </div>
+      </section>
+
+      <p class="footnote">
+        Each trade is one close, as Bybit reports it in Closed P&amp;L (USDT/USDC perps and inverse contracts).
+        Net P&amp;L is Bybit's figure, after opening and closing fees and funding. Funding per trade is derived as price P&amp;L − fees − net P&amp;L.
+        Inverse contracts are converted to USD at the exit price. Days and hours are in your local time zone.
+      </p>
+    </div>
+  </div>
+</div>
+
+<!-- date range for the view -->
+<dialog id="rangeDlg" class="dlg">
+  <form method="dialog" id="rangeForm">
+    <h2>Date range</h2>
+    <div class="presets" id="presets"></div>
+    <div class="custom">
+      <div class="kicker">Custom</div>
+      <div class="dates">
+        <label>From <input type="date" id="rangeFrom" required></label>
+        <label>To <input type="date" id="rangeTo" required></label>
+      </div>
+    </div>
+    <div class="dlg-actions">
+      <button type="button" class="btn ghost" value="cancel" id="rangeCancel">Cancel</button>
+      <button type="submit" class="btn primary" id="rangeApply">Apply custom range</button>
+    </div>
+  </form>
+</dialog>
+
+<!-- pull exact days from Bybit -->
+<dialog id="pullDlg" class="dlg">
+  <form method="dialog" id="pullForm">
+    <h2>Pull data from Bybit</h2>
+    <p class="muted small">Clears what's loaded now and fetches every closed perp trade between these days, inclusive. If the pull fails, your current data is kept.</p>
+    <div class="dates">
+      <label>From <input type="date" id="pullFrom" required></label>
+      <label>To <input type="date" id="pullTo" required></label>
+    </div>
+    <div class="quick" id="pullQuick">
+      <button type="button" data-days="7">Last 7 days</button>
+      <button type="button" data-days="30">Last 30 days</button>
+      <button type="button" data-days="90">Last 90 days</button>
+      <button type="button" data-days="365">Last year</button>
+      <button type="button" data-days="max">Everything (≈2 years)</button>
+    </div>
+    <p id="pullNote" class="muted small"></p>
+    <p id="pullError" class="error small" hidden></p>
+    <div class="dlg-actions">
+      <button type="button" class="btn ghost" id="pullCancel">Cancel</button>
+      <button type="submit" class="btn primary" id="pullStart">Pull</button>
+    </div>
+  </form>
+</dialog>
+
+
+<!-- password for the API -->
+<dialog id="pwDlg" class="dlg">
+  <form method="dialog" id="pwForm">
+    <h2>Enter your Perp Dojo password</h2>
+    <p class="muted small">This is the <code>PERP_PASSWORD</code> set on the server. It's remembered in this browser.</p>
+    <p id="pwNote" class="error small" hidden></p>
+    <input type="text" name="username" value="perp-dojo" autocomplete="username" hidden>
+    <input id="pwInput" type="password" autocomplete="current-password" class="pw-input" aria-label="Password">
+    <div class="dlg-actions">
+      <button type="button" class="btn ghost" id="pwCancel">Cancel</button>
+      <button type="submit" class="btn primary">Unlock</button>
+    </div>
+  </form>
+</dialog>
+
+<script type="module" src="app.js"></script>
+</body>
+</html>

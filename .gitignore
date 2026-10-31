@@ -1,0 +1,6 @@
+# secrets and your trade history never leave this machine
+.env
+data/
+node_modules/
+.DS_Store
+*.log
