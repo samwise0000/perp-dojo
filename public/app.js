@@ -99,6 +99,8 @@ function applyTheme(id) {
   $('#themeBtn').title = 'Theme: ' + t.name;
   $('#themeMenu').querySelectorAll('.theme-opt').forEach(b => b.setAttribute('aria-checked', String(b.dataset.theme === t.id)));
 }
+// Lives on <body>: inside the sticky sidebar's stacking context, dashboard cards would paint over it.
+document.body.appendChild($('#themeMenu'));
 $('#themeMenu').innerHTML = THEMES.map(t => `<button class="theme-opt" type="button" role="menuitemradio" data-theme="${t.id}" aria-checked="false">
   <span class="theme-sw">${t.sw.map(c => `<i style="background:${c}"></i>`).join('')}</span>
   <span class="theme-name">${t.name}<small>${t.note}</small></span><span class="theme-check">✓</span></button>`).join('');
@@ -119,7 +121,7 @@ $('#themeMenu').onclick = e => {
   const b = e.target.closest('.theme-opt'); if (!b) return;
   store.set('theme', b.dataset.theme); applyTheme(b.dataset.theme); themeMenu(false);
 };
-document.addEventListener('click', e => { if (!e.target.closest('.theme-wrap')) themeMenu(false); });
+document.addEventListener('click', e => { if (!e.target.closest('.theme-wrap, #themeMenu')) themeMenu(false); });
 document.addEventListener('keydown', e => { if (e.key === 'Escape') themeMenu(false); });
 applyTheme(savedTheme() || systemTheme());
 matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => { if (!savedTheme()) applyTheme(systemTheme()); });
