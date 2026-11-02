@@ -258,3 +258,34 @@ test('warnings: a quiet, profitable account gets none', () => {
   assert.deepEqual(warnings({ recent, s, ds: dayStreaks(dailyMap(recent)), now, fmt: String, fmtAgo: String }), []);
   assert.equal(WARN.maxTradesPerDay, 2);
 });
+
+import { dailyLoss, weekStart, weekReview } from '../public/metrics.js';
+
+test('daily loss limit: 4% of the equity the day started with', () => {
+  const now = new Date(2026, 10, 2, 15).getTime(), h = 3_600_000;
+  const t = (hAgo, pnl) => ({ time: now - hAgo * h, pnl });
+  // started the day at $10,000 (now $9,600 after −$400): limit is $400, so it's hit
+  let r = dailyLoss([t(3, -250), t(1, -150), t(30, -999)], 9_600, now);
+  assert.equal(r.n, 2);
+  close(r.base, 10_000); close(r.limit, 400); assert.equal(r.hit, true); close(r.lossPct, 4);
+  r = dailyLoss([t(2, -200)], 9_800, now);
+  assert.equal(r.hit, false); close(r.used, 0.5);
+  r = dailyLoss([t(2, 300)], 10_300, now);
+  assert.equal(r.hit, false); close(r.used, 0);
+  assert.equal(dailyLoss([t(1, -500)], null, now).hit, false);
+});
+
+test('weekly review: Monday start, Saturday trades, overtrading and its cost', () => {
+  const mon = new Date(2026, 9, 26).getTime(), D = 86_400_000;
+  assert.equal(weekStart(mon + 3 * D + 5000), mon);
+  const at = (day, hour, pnl) => ({ time: mon + day * D + hour * 3_600_000, pnl, gross: pnl, fees: 0, funding: 0, notional: 1, margin: 1, leverage: 1, symbol: 'X', dir: 'Long' });
+  const trades = [at(1, 9, 50), at(1, 10, -20), at(1, 11, -30), at(1, 12, -10), at(3, 9, 40), at(5, 10, -60), at(8, 9, 999)];
+  const r = weekReview(trades, mon, { equity: 1000, checkinDone: k => k === '2026-10-27', journaled: k => k.endsWith('27') || k.endsWith('29') });
+  assert.equal(r.trades.length, 6);                       // next Monday's trade is excluded
+  assert.equal(r.rules.saturday.n, 1); close(r.rules.saturday.net, -60);
+  assert.equal(r.rules.overtrading.days.length, 1);
+  assert.equal(r.rules.overtrading.extraTrades, 2); close(r.rules.overtrading.extraNet, -40);
+  assert.equal(r.rules.dailyLoss.days.length, 1);         // Saturday's −60 is past 4% of 1,000
+  assert.deepEqual([r.rules.checkin.done, r.rules.checkin.of], [1, 3]);
+  assert.equal(r.rules.journal.done, 2);
+});

@@ -15,7 +15,25 @@ It pulls your closed perp trades (USDT/USDC linear and inverse) for exactly the 
   - performance and risk summaries, and plain-language "what stands out" notes
 - **Analytics:** cumulative P&L and drawdown, daily, weekly or monthly P&L, breakdowns by market, long vs short, weekday and hour, and the spread of trade outcomes.
 - **Journal:** an entry for any day, with that day's stats and trades, a template, a 1–5 discipline rating and tags. Click a day on the dashboard calendar or heatmap to open its entry. Links like `#journal/2026-10-14` go straight to a day. Entries are kept in this browser's local storage for now, per Bybit account, until cloud storage is set up.
+- **Weekly review:** one week (Monday to Sunday) at a time, with:
+  - the week's stats against last week and your average week
+  - P&L by day, and results by strategy
+  - a rules scorecard: no Saturday trades, at most 2 trades a day (and what the extra trades cost), daily loss under 4%, checked in, journaled
+  - the week's journal entries, and a weekly reflection box
+- **Daily loss limit:** 4% of the equity you started the day with (`WARN.dailyLossPct`). Hitting it brings up a banner and a critical warning, and the Entry wizard says Do not trade. The footer shows today's P&L against the limit.
+- **4H close countdown** in the footer. Candles close every 4 hours from 00:00 UTC. It turns amber in the last 30 minutes and orange-red in the last 5.
 - **Trades:** a sortable list with CSV export.
+- **Exports** (bottom of the sidebar):
+  - **Export CSV:** the trades in the current filters, including their strategy labels.
+  - **Export PDF review:** a written report, not a copy of the dashboard, for the trades in the current filters. It's A4 portrait, in your current theme, built by `public/report.js`. It contains:
+    - a verdict and a plain-English summary of how the period went and why
+    - key numbers with what each one means
+    - performance over time, and what's working and what isn't (markets, sides, strategies, timing)
+    - risk and discipline, including a rules scorecard and what breaking each rule cost
+    - trade quality, with your biggest wins and losses
+    - 3–5 recommendations, highlights from your journal and weekly reflections, and a month-by-month appendix
+
+    It opens the browser's print dialog; choose *Save as PDF*.
 
 Filter everything by date range (presets, or exact From/To days), market and side.
 
@@ -93,6 +111,21 @@ The only dependency is `@vercel/blob`, loaded only when a Blob token is set. Eve
 
 ## Look
 
-Light (lavender) and dark (aubergine) themes follow your system setting. The ◐ button in the sidebar switches between them and remembers your choice.
-- **Gains and losses** are cyan and rose, a pair checked to stay distinguishable for colorblind viewers in both themes. They always appear next to a signed number.
+There are ten themes. Pick one from the ◐ menu at the bottom of the sidebar; it is remembered. Until you pick, the app follows your system: Dark Polar for dark, Classic Light for light.
+
+| Theme | Mode | Look | Fonts |
+|---|---|---|---|
+| Dark Polar | dark | Gunmetal with neon accents (the original) | system UI |
+| Classic Light | light | Clean, quiet and white | Inter |
+| Cream Pastel | light | Warm paper, candy pastels, round corners | Nunito |
+| Terminal | dark | Phosphor green on black, scanlines, square corners | JetBrains Mono |
+| Atelier | light | Thick ink borders, offset shadows, a yellow hero card | DM Sans with Fraunces headings |
+| Dojo Ink | dark | Lacquer brown with gold | Zen Kaku Gothic New with Shippori Mincho headings |
+| Glass | dark | Frosted, translucent panes over slowly drifting colour blobs | Sora |
+| Synthwave | dark | Neon pink and cyan, glowing titles, a striped sun and a scrolling grid in the sidebar | Space Grotesk with Orbitron headings |
+| Broadsheet | light | Newsprint: column rules, a double rule under the title, blackletter masthead, small-caps labels | Newsreader with Playfair Display headings |
+| Arcade | dark | An 8-bit fantasy-console palette, chunky pixel borders, a blinking cursor on the current tab | DotGothic16, Press Start 2P headings, VT323 numbers |
+
+Every theme sets the same tokens at the top of `public/style.css`: surfaces, ink, chart chrome, the gain/loss pair, five accents, status colours, fonts and radii. `data-theme` picks the theme and `data-mode` (dark or light) drives the mode-level tweaks. To add a theme, copy a block, then add it to `THEMES` in `public/app.js` and to the map in the inline script in `index.html`. Fonts come from Google Fonts. Offline, each theme falls back to system fonts.
+- **Gains and losses** are a blue/cyan and red/rose pair in every theme, each pair checked against that theme's card colour to stay distinguishable for colorblind viewers. They always appear next to a signed number.
 - **The other colors** (violet, indigo, amber, orchid, lime) only decorate cards and never encode data.

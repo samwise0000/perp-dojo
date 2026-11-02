@@ -66,7 +66,9 @@ function hBarPath(x0, x1, y, h) {
 
 // Re-render on resize. draw(width, fresh): `fresh` is true for the first
 // render after new data, which animates in; resizes redraw without motion.
-export const calm = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
+let forceCalm = false;                 // set while preparing a PDF: draw everything at its final state
+export const setCalm = v => { forceCalm = v; };
+export const calm = () => forceCalm || matchMedia('(prefers-reduced-motion: reduce)').matches;
 function responsive(el, draw) {
   if (el._ro) el._ro.disconnect();
   let last = 0;
@@ -364,7 +366,9 @@ export function radar(el, { axes, score, label }) {
   el.replaceChildren();
   responsive(el, (width, fresh) => {
     el.replaceChildren();
-    const size = Math.min(width, 300), h = size * 0.86, cx = width / 2, cy = h / 2 + 4, R = size * 0.3;
+    const size = Math.min(width, 300), h = size * 0.86, cx = width / 2, cy = h / 2 + 4;
+    // labels sit outside the shape (about 95px wide each side): shrink the shape on narrow cards so they fit
+    const R = Math.max(40, Math.min(size * 0.3, (width / 2 - 95) / 1.22));
     const svg = svgEl('svg', { width, height: h, viewBox: `0 0 ${width} ${h}`, role: 'img', 'aria-label': label });
     const ang = i => -Math.PI / 2 + (i * 2 * Math.PI) / axes.length;
     const at = (i, f) => [cx + R * f * Math.cos(ang(i)), cy + R * f * Math.sin(ang(i))];

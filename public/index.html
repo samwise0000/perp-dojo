@@ -7,7 +7,10 @@
   <link rel="icon" href="logo.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="logo.png">
   <link rel="stylesheet" href="style.css">
-  <script>try{var t=localStorage.getItem("perp-report:theme");t=t?JSON.parse(t):null;document.documentElement.dataset.theme=t||(matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light")}catch(e){document.documentElement.dataset.theme="dark"}</script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,400..800&family=Fraunces:ital,opsz,wght@0,9..144,400..900;1,9..144,400..900&family=Inter:wght@400..800&family=JetBrains+Mono:wght@400..800&family=Nunito:wght@400..800&family=Shippori+Mincho:wght@500;700;800&family=Zen+Kaku+Gothic+New:wght@400;500;700&family=Sora:wght@300..800&family=Space+Grotesk:wght@400..700&family=Orbitron:wght@500..900&family=Newsreader:ital,opsz,wght@0,6..72,400..800;1,6..72,400..800&family=Playfair+Display:ital,wght@0,700..900;1,700..900&family=UnifrakturMaguntia&family=DotGothic16&family=Press+Start+2P&family=VT323&display=swap">
+  <script>(function(){var M={polar:"dark",classic:"light",cream:"light",terminal:"dark",atelier:"light",dojo:"dark",glass:"dark",synthwave:"dark",broadsheet:"light",arcade:"dark"},L={dark:"polar",light:"classic"},t=null;try{t=JSON.parse(localStorage.getItem("perp-report:theme"))}catch(e){}t=L[t]||t;if(!M[t])t=matchMedia("(prefers-color-scheme: dark)").matches?"polar":"classic";var d=document.documentElement;d.dataset.theme=t;d.dataset.mode=M[t]})()</script>
 </head>
 <body>
 <div class="app">
@@ -17,30 +20,49 @@
       <button type="button" data-view="dashboard" aria-current="page"><svg viewBox="0 0 16 16" aria-hidden="true"><rect x="1.5" y="1.5" width="5" height="5" rx="1"/><rect x="9.5" y="1.5" width="5" height="5" rx="1"/><rect x="1.5" y="9.5" width="5" height="5" rx="1"/><rect x="9.5" y="9.5" width="5" height="5" rx="1"/></svg>Dashboard</button>
       <button type="button" data-view="analytics"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2 14V8M6 14V3M10 14V6M14 14V10"/></svg>Analytics</button>
       <button type="button" data-view="journal"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3.5 1.5h7l2 2v11h-9z"/><path d="M5.5 6h5M5.5 8.5h5M5.5 11h3"/></svg>Journal</button>
+      <button type="button" data-view="review"><svg viewBox="0 0 16 16" aria-hidden="true"><rect x="1.5" y="2.5" width="13" height="12" rx="2"/><path d="M1.5 6.5h13M5 1v3M11 1v3M4.5 11l2 1.5 4-4"/></svg>Weekly review</button>
+      <button type="button" data-view="playbook"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 2.5h4.5a1.5 1.5 0 0 1 1.5 1.5v9.5a1 1 0 0 0-1-1h-5z"/><path d="M13.5 2.5H9A1.5 1.5 0 0 0 7.5 4v9.5a1 1 0 0 1 1-1h5z"/></svg>Playbook</button>
+      <button type="button" data-view="wizard"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 4.5 4 6l2.5-3M2.5 10.5 4 12l2.5-3M8.5 4.5h5M8.5 10.5h5"/></svg>Entry wizard</button>
       <button type="button" data-view="trades"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2 3.5h12M2 8h12M2 12.5h12"/></svg>Trades</button>
     </nav>
 
-    <div class="side-section side-data">
-      <div class="side-label">Data</div>
-      <p id="coverage" class="side-text"></p>
-      <button id="pullBtn" class="btn primary block" type="button" hidden>Pull data…</button>
-      <button id="syncBtn" class="btn block" type="button" hidden>Refresh</button>
-      <p id="syncState" class="side-text"></p>
-      <div class="side-label side-label-gap">Server copy</div>
-      <div class="side-pair">
-        <button id="saveBtn" class="btn block save-btn" type="button" hidden title="Upload your trades and journal as one snapshot">Save to server</button>
-        <button id="loadBtn" class="btn block" type="button" hidden title="Replace this browser's data with the saved snapshot">Load</button>
-      </div>
-      <p id="serverState" class="side-text"></p>
+    <div class="side-exports">
+      <div class="side-label">Export</div>
+      <button id="exportCsv" class="side-btn" type="button"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 1.5h5.5l3 3v10H4z"/><path d="M9.5 1.5v3h3M6 9h5M6 11.5h5M6 6.5h2"/></svg>Export CSV</button>
+      <button id="exportPdf" class="side-btn" type="button"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 1.5h5.5l3 3v10H4z"/><path d="M9.5 1.5v3h3"/><path d="M6.2 8.2v4.3M6.2 8.2h1.1a1.1 1.1 0 0 1 0 2.2H6.2"/></svg>Export PDF review</button>
     </div>
 
     <div class="side-foot">
       <span id="account" class="side-text"></span>
-      <button id="themeBtn" class="icon-btn" type="button" title="Switch light / dark" aria-label="Switch light or dark theme">◐</button>
+      <div class="theme-wrap"><button id="themeBtn" class="icon-btn" type="button" title="Theme" aria-label="Choose a theme" aria-haspopup="menu" aria-expanded="false">◐</button><div id="themeMenu" class="theme-menu" role="menu" aria-label="Themes"></div></div>
     </div>
   </aside>
 
   <div class="main">
+    <div id="saturday" class="sat-banner" role="alert" hidden>
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2.8 22.5 21h-21z"/><path d="M12 9.5v5M12 17.6v.4"/></svg>
+      <div>
+        <strong>Saturday is a no-trade day.</strong>
+        <span id="satSub">Close the charts. Review the week, update your playbook, and come back fresh.</span>
+      </div>
+      <button id="satReview" class="btn small-btn banner-btn" type="button">Do your weekly review</button>
+    </div>
+    <div id="overtrade" class="sat-banner" role="alert" hidden>
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2.8 22.5 21h-21z"/><path d="M12 9.5v5M12 17.6v.4"/></svg>
+      <div>
+        <strong id="otTitle"></strong>
+        <span id="otSub"></span>
+      </div>
+      <button id="otJournal" class="btn small-btn banner-btn" type="button">Open today's journal</button>
+    </div>
+    <div id="losslimit" class="sat-banner" role="alert" hidden>
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2.8 22.5 21h-21z"/><path d="M12 9.5v5M12 17.6v.4"/></svg>
+      <div>
+        <strong id="llTitle"></strong>
+        <span id="llSub"></span>
+      </div>
+      <button id="llJournal" class="btn small-btn banner-btn" type="button">Open today's journal</button>
+    </div>
     <div id="progress" class="progress" hidden><div></div></div>
     <div id="alert" class="alert" role="alert" hidden></div>
 
@@ -78,6 +100,7 @@
         <div class="filters" role="toolbar" aria-label="Filters">
           <button id="rangeBtn" class="btn" type="button" aria-haspopup="dialog"><svg viewBox="0 0 16 16" aria-hidden="true"><rect x="1.5" y="2.5" width="13" height="12" rx="2"/><path d="M1.5 6.5h13M5 1v3M11 1v3"/></svg><span id="rangeLabel">All time</span></button>
           <select id="symbolFilter" aria-label="Market"></select>
+          <select id="strategyFilter" aria-label="Strategy"></select>
           <select id="sideFilter" aria-label="Side">
             <option value="all">Longs and shorts</option>
             <option value="Long">Longs only</option>
@@ -88,12 +111,32 @@
 
       <!-- ===================== DASHBOARD ===================== -->
       <section id="view-dashboard" class="grid">
+        <div class="card c12 today-card accented" style="--a: var(--a5)">
+          <div class="today-head">
+            <div class="kicker">Today · <span id="tdDate"></span></div>
+            <span id="tdPeek" class="today-peek muted small"></span>
+            <span id="tdStatus" class="today-status"></span>
+            <button id="tdEdit" class="btn ghost small-btn" type="button">Edit list</button>
+            <button id="tdCollapse" class="icon-btn today-toggle" type="button" hidden aria-expanded="true" aria-controls="tdBody" title="Collapse"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 10l4-4 4 4"/></svg></button>
+          </div>
+          <div class="today-body" id="tdBody">
+            <div>
+              <div class="muted small today-sub">Daily check-in. Tap each one to commit, then write in today's journal. Resets every day.</div>
+              <div id="tdPledges" class="pledges" role="group" aria-label="Daily check-in"></div>
+            </div>
+            <div class="today-note">
+              <textarea id="tdText" rows="3" placeholder="Today's journal: your plan, how you feel, what you're watching…" aria-label="Today's journal entry"></textarea>
+              <div class="today-foot"><span id="tdSaved" class="muted small"></span><button id="tdOpen" class="btn ghost small-btn" type="button">Open full entry →</button></div>
+            </div>
+          </div>
+        </div>
+
+        <div id="statsSentinel" class="c12 stats-sentinel" aria-hidden="true"></div>
         <div class="stats c12">
           <div class="card stat net-card hero">
             <div class="stat-text">
               <div class="kicker">Net P&amp;L <button class="info" type="button" data-info="Sum of every closed trade after fees and funding. Deposits and withdrawals aren't included.">i</button></div>
               <div class="stat-value"><span id="netMark" class="mark-glyph" aria-hidden="true"></span><span id="netValue"></span></div>
-              <div id="netSub" class="muted small"></div>
             </div>
             <div id="netSpark" class="net-bg" aria-hidden="true"></div>
           </div>
@@ -150,7 +193,7 @@
 
         <div class="stack c4">
           <div class="card accented" style="--a: var(--a5)">
-            <div class="kicker">Account equity</div>
+            <div class="card-row"><div class="kicker">Account equity</div><button id="eyeBtn" class="icon-btn eye-btn" type="button" aria-pressed="false" aria-label="Hide balance" title="Hide balance"></button></div>
             <div id="equityValue" class="mid-value"></div>
             <div id="equitySub" class="muted small"></div>
             <p id="equityNote" class="muted small equity-note" hidden>Equity moves with deposits and withdrawals. No trading stat uses it: they're all built from closed trades only.</p>
@@ -286,6 +329,7 @@
             </div>
           </div>
           <dl id="jrStats" class="cal-stats jr-stats"></dl>
+          <div id="jrCheckin" class="jr-checkin"></div>
           <div id="jrTradesWrap" class="table-wrap"><table id="jrTrades" class="data compact-rows"></table></div>
 
           <div class="jr-field">
@@ -310,6 +354,144 @@
         </div>
       </section>
 
+      <!-- ===================== WEEKLY REVIEW ===================== -->
+      <section id="view-review" class="grid" hidden>
+        <div class="card c12 accented" style="--a: var(--a2)">
+          <div class="rv-head">
+            <div class="cal-nav">
+              <button id="rvPrev" class="icon-btn" type="button" aria-label="Previous week">‹</button>
+              <h2 id="rvTitle"></h2>
+              <button id="rvNext" class="icon-btn" type="button" aria-label="Next week">›</button>
+              <button id="rvThis" class="btn ghost small-btn" type="button">This week</button>
+            </div>
+            <span id="rvCompare" class="muted small"></span>
+          </div>
+          <dl id="rvStats" class="cal-stats rv-stats"></dl>
+        </div>
+        <div class="card c8 accented" style="--a: var(--a1)">
+          <div class="kicker">Day by day</div>
+          <div id="rvDays" class="chart"></div>
+        </div>
+        <div class="card c4 accented" style="--a: var(--a4)">
+          <div class="kicker">Rules</div>
+          <ul id="rvRules" class="rv-rules"></ul>
+        </div>
+        <div class="card c6 accented" style="--a: var(--a3)">
+          <div class="kicker">By strategy</div>
+          <div class="table-wrap"><table id="rvStrats" class="data compact-rows"></table></div>
+        </div>
+        <div class="card c6 accented" style="--a: var(--a5)">
+          <div class="kicker">Journal this week</div>
+          <ul id="rvJournal" class="jr-recent"></ul>
+        </div>
+        <div class="card c12 accented" style="--a: var(--a2)">
+          <div class="card-row"><label for="rvText" class="kicker">Weekly reflection</label><button id="rvTemplate" class="btn ghost small-btn" type="button">Insert prompts</button></div>
+          <textarea id="rvText" class="pb-text" rows="6" placeholder="What went well this week, what didn't, and what you'll do differently next week."></textarea>
+          <p id="rvSaved" class="muted small jr-saved"></p>
+        </div>
+      </section>
+
+      <!-- ===================== PLAYBOOK ===================== -->
+      <section id="view-playbook" class="grid" hidden>
+        <div class="card c4 accented" style="--a: var(--a3)">
+          <div class="card-row"><div class="kicker">Strategies</div><button id="pbAdd" class="btn primary small-btn" type="button">+ New strategy</button></div>
+          <ul id="pbList" class="pb-list"></ul>
+        </div>
+
+        <div class="card c8 accented pb-editor" style="--a: var(--a4)">
+          <div id="pbEmpty" class="pb-empty" hidden>
+            <h2>Your playbook is empty</h2>
+            <p class="muted">Write down each setup you trade: what it is, exactly when you enter, and exactly when you get out. Clear rules make it easier to spot when you're improvising.</p>
+            <button id="pbAdd2" class="btn primary" type="button">+ Add your first strategy</button>
+          </div>
+          <div id="pbForm" class="pb-form" hidden>
+            <div class="pb-head">
+              <input id="pbName" class="pb-name" type="text" placeholder="Strategy name" maxlength="80" aria-label="Strategy name">
+              <button id="pbDelete" class="btn ghost small-btn danger" type="button">Delete</button>
+            </div>
+            <div class="jr-field">
+              <label for="pbTagInput" class="kicker">Tags</label>
+              <div class="jr-tags"><span id="pbTags"></span><input id="pbTagInput" type="text" placeholder="Add a tag and press Enter" maxlength="32"></div>
+            </div>
+            <div class="jr-field">
+              <label for="pbOverview" class="kicker">Overview</label>
+              <textarea id="pbOverview" class="pb-text" rows="4" placeholder="What is this setup, which markets and timeframes, and why does it work?"></textarea>
+            </div>
+            <div class="pb-two">
+              <div class="jr-field">
+                <label for="pbEntry" class="kicker"><span class="pb-dot pos"></span>Entry criteria</label>
+                <textarea id="pbEntry" class="pb-text" rows="7" placeholder="Every condition that must be true before you enter, e.g.&#10;- 4h trend up&#10;- pullback to the 20 EMA&#10;- bullish engulfing on the 15m"></textarea>
+              </div>
+              <div class="jr-field">
+                <label for="pbExit" class="kicker"><span class="pb-dot neg"></span>Exit criteria</label>
+                <textarea id="pbExit" class="pb-text" rows="7" placeholder="Where the stop goes, where you take profit, and what invalidates the trade, e.g.&#10;- stop below the swing low&#10;- take half at 2R&#10;- out if 4h closes below the EMA"></textarea>
+              </div>
+            </div>
+            <p id="pbSaved" class="muted small jr-saved"></p>
+          </div>
+        </div>
+      </section>
+
+      <!-- ===================== ENTRY WIZARD ===================== -->
+      <section id="view-wizard" class="grid" hidden>
+        <div class="card c7 accented wz-card" style="--a: var(--a2)">
+          <div class="kicker">Before you enter</div>
+          <h2 class="wz-title">Tick what's true right now</h2>
+          <div class="wz-checks">
+            <label class="wz-check required">
+              <input type="checkbox" id="wzZone">
+              <span class="wz-box" aria-hidden="true"></span>
+              <span class="wz-text"><b>Is the chart at a 4H zone?</b><small>Required. Without it, there's no trade.</small></span>
+              <span class="wz-tag">Required</span>
+            </label>
+            <label class="wz-check required">
+              <input type="checkbox" id="wzClose">
+              <span class="wz-box" aria-hidden="true"></span>
+              <span class="wz-text"><b>Trading a 4H candle close?</b><small>Required. Wait for the 4H candle to close.</small></span>
+              <span class="wz-tag">Required</span>
+            </label>
+            <label class="wz-check">
+              <input type="checkbox" id="wzBtc">
+              <span class="wz-box" aria-hidden="true"></span>
+              <span class="wz-text"><b>BTC 4H direction aligned?</b><small>Adds <span class="wz-bonus" data-k="btc"></span> risk. If not, SMT becomes required.</small></span>
+              <span class="wz-tag plus" data-k="btc"></span>
+            </label>
+            <label class="wz-check">
+              <input type="checkbox" id="wzSmt">
+              <span class="wz-box" aria-hidden="true"></span>
+              <span class="wz-text"><b>SMT present?</b><small><span id="wzSmtWhy"></span>Adds <span class="wz-bonus" data-k="smt"></span> risk.</small></span>
+              <span class="wz-tag plus" data-k="smt" id="wzSmtTag"></span>
+            </label>
+            <label class="wz-check">
+              <input type="checkbox" id="wzRej">
+              <span class="wz-box" aria-hidden="true"></span>
+              <span class="wz-text"><b>BTC also at rejection level?</b><small>Adds <span class="wz-bonus" data-k="rej"></span> risk.</small></span>
+              <span class="wz-tag plus" data-k="rej"></span>
+            </label>
+          </div>
+          <div class="wz-foot">
+            <button id="wzReset" class="btn ghost small-btn" type="button">Clear</button>
+            <span class="muted small" id="wzRule"></span>
+          </div>
+        </div>
+
+        <div class="card c5 wz-result" id="wzResult" aria-live="polite">
+          <div class="kicker">Risk on this trade</div>
+          <div id="wzVerdict" class="wz-verdict"></div>
+          <div id="wzAmount" class="wz-amount"></div>
+          <div id="wzPct" class="wz-pct"></div>
+          <ul id="wzBreakdown" class="wz-breakdown"></ul>
+          <div class="wz-equity">
+            <div class="card-row">
+              <span class="muted small" id="wzEquityLabel"></span>
+              <button id="wzRefresh" class="icon-btn" type="button" title="Fetch current equity" aria-label="Fetch current equity">↻</button>
+            </div>
+            <label class="wz-manual" id="wzManualWrap" hidden>Equity <input id="wzManual" type="number" min="0" step="0.01" inputmode="decimal" placeholder="Type your equity"></label>
+          </div>
+          <div id="wzNotes" class="wz-notes"></div>
+        </div>
+      </section>
+
       <!-- ===================== TRADES ===================== -->
       <section id="view-trades" class="grid" hidden>
         <div class="card c12">
@@ -330,6 +512,25 @@
     </div>
   </div>
 </div>
+
+<!-- the written PDF review, built when you export -->
+<article id="reportDoc" class="rp" hidden></article>
+
+<footer id="statusBar" class="status-bar" role="status" aria-live="polite">
+  <span id="sbConn" class="sb-conn"><i></i><span>Connecting…</span></span>
+  <span id="sb4h" class="sb-4h"><svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8.5" r="5.8"/><path d="M8 5.4v3.3l2.2 1.4M6 1.5h4"/></svg><span>4H close</span><b id="sb4hTime">--:--:--</b></span>
+  <span id="sbStats" class="sb-stats"></span>
+  <span class="sb-data">
+    <span id="coverage" class="sb-text sb-coverage"></span>
+    <button id="pullBtn" class="sb-icon" type="button" hidden data-tip="Choose exact days to fetch from Bybit. Replaces what's loaded." aria-label="Pull data"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M6.6 9.4a2.6 2.6 0 0 0 3.7 0l2.4-2.4a2.6 2.6 0 0 0-3.7-3.7L8 4.3"/><path d="M9.4 6.6a2.6 2.6 0 0 0-3.7 0L3.3 9a2.6 2.6 0 0 0 3.7 3.7l1-1"/></svg></button>
+    <button id="syncBtn" class="sb-icon" type="button" hidden data-tip="Fetch trades closed since your last pull." aria-label="Refresh"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M13.2 6.2A5.5 5.5 0 0 0 3 5.2M2.8 9.8A5.5 5.5 0 0 0 13 10.8"/><path d="M3 2.4v2.9h2.9M13 13.6v-2.9h-2.9"/></svg></button>
+    <span id="syncState" class="sb-text sb-sync"></span>
+    <span class="sb-sep" aria-hidden="true"></span>
+    <button id="saveBtn" class="sb-icon save-btn" type="button" hidden data-tip="Upload your trades, journal and playbook as one snapshot." aria-label="Save to server"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4.6 12.2H4a3 3 0 0 1-.4-6 4.2 4.2 0 0 1 8.1-.9A3.4 3.4 0 0 1 12 12.2h-.6"/><path d="M8 13.8V8.2M5.9 10.2 8 8.1l2.1 2.1"/></svg></button>
+    <button id="loadBtn" class="sb-icon" type="button" hidden data-tip="Replace this browser's data with the last saved snapshot." aria-label="Load from server"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4.6 12.2H4a3 3 0 0 1-.4-6 4.2 4.2 0 0 1 8.1-.9A3.4 3.4 0 0 1 12 12.2h-.6"/><path d="M8 8.2v5.6M5.9 11.8 8 13.9l2.1-2.1"/></svg></button>
+    <span id="serverState" class="sb-text sb-server"></span>
+  </span>
+</footer>
 
 <!-- date range for the view -->
 <dialog id="rangeDlg" class="dlg">
@@ -375,6 +576,20 @@
   </form>
 </dialog>
 
+
+<!-- edit the daily check-in list -->
+<dialog id="pledgeDlg" class="dlg">
+  <form method="dialog" id="pledgeForm">
+    <h2>Daily check-in</h2>
+    <p class="muted small">One commitment per line. Changes apply from today; past days keep what you affirmed.</p>
+    <textarea id="pledgeInput" class="pb-text" rows="7"></textarea>
+    <div class="dlg-actions">
+      <button type="button" class="btn ghost" id="pledgeReset">Restore defaults</button>
+      <button type="button" class="btn ghost" id="pledgeCancel">Cancel</button>
+      <button type="submit" class="btn primary">Save</button>
+    </div>
+  </form>
+</dialog>
 
 <!-- password for the API -->
 <dialog id="pwDlg" class="dlg">

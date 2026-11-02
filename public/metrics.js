@@ -340,6 +340,7 @@ export const WARN = {
   leverage: 25,                // average leverage over the last 7 days
   revengeMinutes: 15,          // reopening this soon after a losing close
   outsizedLoss: 3,             // a recent loss this many times the average loss
+  dailyLossPct: 4,             // stop for the day after losing this % of the account
 };
 
 export function warnings({ recent, s, ds, now = Date.now(), keyDaysLeft = null, fmt, fmtAgo }) {
@@ -392,4 +393,57 @@ export function warnings({ recent, s, ds, now = Date.now(), keyDaysLeft = null, 
   }
 
   return out.sort((a, b) => (a.level === b.level ? b.rank - a.rank : a.level === 'critical' ? -1 : 1));
+}
+
+
+// ---- daily loss limit ----
+// Today's realized P&L against WARN.dailyLossPct of the equity you started the
+// day with (current equity minus today's closed P&L, so the base doesn't shrink
+// as you lose). Without an equity figure, the limit can't be judged.
+export function dailyLoss(trades, equity, now = Date.now(), pct = WARN.dailyLossPct) {
+  const start = new Date(now); start.setHours(0, 0, 0, 0);
+  const today = trades.filter(t => t.time >= start.getTime() && t.time <= now);
+  const net = today.reduce((n, t) => n + t.pnl, 0);
+  if (!Number.isFinite(equity) || equity <= 0) return { net, n: today.length, base: null, limit: null, lossPct: null, used: null, hit: false };
+  const base = equity - net, limit = (base * pct) / 100;
+  const loss = Math.max(0, -net);
+  return { net, n: today.length, base, limit, lossPct: (loss / base) * 100, used: loss / limit, hit: loss >= limit };
+}
+
+// ---- weekly review ----
+// Monday 00:00 local of the week containing `ms`.
+export function weekStart(ms) {
+  const d = new Date(ms); d.setHours(0, 0, 0, 0);
+  d.setDate(d.getDate() - ((d.getDay() + 6) % 7));
+  return d.getTime();
+}
+
+// The week's trades, per-day breakdown, and how your rules held up.
+// `checkinDone(dayKey)` and `journaled(dayKey)` come from the page.
+export function weekReview(trades, start, { equity = null, maxTrades = WARN.maxTradesPerDay, lossPct = WARN.dailyLossPct, checkinDone = () => false, journaled = () => false } = {}) {
+  const end = new Date(start); end.setDate(end.getDate() + 7);
+  const inWeek = trades.filter(t => t.time >= start && t.time < end.getTime()).sort((a, b) => a.time - b.time);
+  const days = [];
+  for (let i = 0; i < 7; i++) {
+    const d = new Date(start); d.setDate(d.getDate() + i);
+    const k = dayKey(d), next = new Date(d); next.setDate(next.getDate() + 1);
+    const ts = inWeek.filter(t => t.time >= d.getTime() && t.time < next.getTime());
+    days.push({ key: k, date: d, trades: ts, n: ts.length, net: ts.reduce((n, t) => n + t.pnl, 0) });
+  }
+  const traded = days.filter(d => d.n);
+  const saturday = days[5];
+  const over = days.filter(d => d.n > maxTrades);
+  const extra = over.flatMap(d => d.trades.slice(maxTrades));        // the 3rd trade onwards each day
+  const limit = equity ? (equity * lossPct) / 100 : null;           // approximate: today's equity as the base
+  const lossDays = limit ? days.filter(d => d.net <= -limit) : [];
+  return {
+    start, end: end.getTime() - 1, trades: inWeek, days, s: summarize(inWeek),
+    rules: {
+      saturday: { n: saturday.n, net: saturday.net },
+      overtrading: { days: over, extraTrades: extra.length, extraNet: extra.reduce((n, t) => n + t.pnl, 0) },
+      dailyLoss: { known: limit !== null, days: lossDays },
+      checkin: { done: traded.filter(d => checkinDone(d.key)).length, of: traded.length },
+      journal: { done: days.filter(d => journaled(d.key)).length, of: 7 },
+    },
+  };
 }
