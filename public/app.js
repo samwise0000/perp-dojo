@@ -1,11 +1,15 @@
 import {
   summarize, groupStats, periodPnl, byWeekday, byHour, histogram, insights,
   dailyMap, dayStreaks, tradingScore, calendarMonth, scaleOf, dayKey, WEEKDAYS, warnings, WARN, dailyLoss, weekStart, weekReview,
+  bySession, openGrid, openWindows, holdOutcome, costBreakdown, fmtDuration,
+  TRADE_TAGS, tagKind, tagStats, dayRecap,
 } from './metrics.js';
+import { openReplay } from './replay.js';
+import { renderScanner } from './scanner.js';
 import { normalizeAll } from './trades.js';
 import { pull } from './sync.js';
 import { idbGet, idbSet } from './db.js';
-import { writeReport } from './report.js';
+import { writeReport, monthCompare } from './report.js';
 import { lineChart, columnChart, hbarChart, gauge, splitBar, sparkline, radar, heatClass, tipOn, hideTip, calm, setCalm, donut, meter } from './charts.js';
 
 const $ = s => document.querySelector(s);
@@ -74,6 +78,7 @@ const filters = { range: 'all', from: null, to: null, symbol: 'all', side: 'all'
 let view = store.get('view', 'dashboard');
 let cal = null;                                  // { y, m } shown in the calendar
 const tableState = { sort: 'time', dir: -1, shown: 50 };
+let timeBasis = store.get('timeBasis', 'open');     // Analytics timing: count trades by when they opened or closed
 
 // ---------- theme ----------
 // Each theme: id, name, mode, a one-line tagline and four swatch colours (page, card, accent, gain).
@@ -127,7 +132,7 @@ applyTheme(savedTheme() || systemTheme());
 matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => { if (!savedTheme()) applyTheme(systemTheme()); });
 
 // ---------- views ----------
-const TITLES = { dashboard: 'Dashboard', analytics: 'Analytics', journal: 'Journal', review: 'Weekly review', playbook: 'Playbook', wizard: 'Entry wizard', trades: 'Trades' };
+const TITLES = { dashboard: 'Dashboard', analytics: 'Analytics', journal: 'Journal', review: 'Weekly review', reports: 'Reports', playbook: 'Playbook', wizard: 'Entry wizard', trades: 'Trades', scanner: 'SFP scanner' };
 function setView(v, { hash = true } = {}) {
   view = v; store.set('view', v);
   if (hash) syncHash();
@@ -303,7 +308,7 @@ async function saveToServer() {
     const savedAt = Date.now();
     flushPlaybook();
     flushToday(); flushReview();
-    const snap = { app: 'perp-dojo', v: 4, uid: status.key.uid, savedAt, cache, journal: journalAll(), playbook: playbookAll(), labels: labelsAll(), pledges: pledgeList(), weekly: weeklyAll() };
+    const snap = { app: 'perp-dojo', v: 4, uid: status.key.uid, savedAt, cache, journal: journalAll(), playbook: playbookAll(), labels: labelsAll(), notes: notesAll(), pledges: pledgeList(), weekly: weeklyAll() };
     const body = await gzip(JSON.stringify(snap));
     const r = await apiJson('/api/snapshot', { method: 'POST', headers: { 'content-type': 'application/octet-stream' }, body });
     store.set(uidKey('serverSavedAt'), savedAt);
@@ -327,6 +332,8 @@ async function loadFromServer() {
     journalCache = null;
     store.set(playbookKey(), snap.playbook || []);
     store.set(labelsKey(), snap.labels || {});
+    store.set(notesKey(), snap.notes || {});
+    notesCache = null;
     if (snap.pledges) store.set(pledgesKey(), snap.pledges);
     if (snap.weekly) store.set(weeklyKey(), snap.weekly);
     pbCache = null; labelsCache = null;
@@ -469,7 +476,9 @@ function render() {
     ? `${s.n.toLocaleString()} closed trade${s.n === 1 ? '' : 's'} · ${date(from ?? s.first)} – ${date(to ?? s.last)}${filters.symbol !== 'all' ? ' · ' + filters.symbol : ''}${filters.side !== 'all' ? ' · ' + filters.side.toLowerCase() + 's' : ''}${filters.strategy !== 'all' ? ' · ' + (filters.strategy === 'none' ? 'unlabeled' : strategyName(filters.strategy)) : ''}`
     : 'No closed trades in this range.';
   // the journal is about days, not the filtered range: no filters, its own subtitle
-  $('#report .filters').hidden = ['journal', 'playbook', 'wizard', 'review'].includes(view);
+  $('#report .filters').hidden = ['journal', 'playbook', 'wizard', 'review', 'reports', 'scanner'].includes(view);
+  if (view === 'scanner') $('#rangeText').textContent = 'Beta · backtest your 4h swing failure entries across your pairs';
+  if (view === 'reports') $('#rangeText').textContent = 'A written report for each month, from every trade in it';
   if (view === 'review') $('#rangeText').textContent = 'One week at a time: the numbers, your rules, and what to change';
   if (view === 'wizard') $('#rangeText').textContent = 'Check the setup, get the amount to risk';
   if (view === 'journal') {
@@ -483,12 +492,15 @@ function render() {
   else if (view === 'playbook') renderPlaybook();
   else if (view === 'wizard') renderWizard();
   else if (view === 'review') renderReview();
+  else if (view === 'reports') renderReports();
+  else if (view === 'scanner') renderScanner({ apiJson, openReplay, fmt: { money, price, dateTime, signedPct, pct } });
   else renderTrades(trades);
 }
 
 // ===== dashboard =====
 function renderDashboard(trades, s, from, to) {
   renderToday();
+  renderRecap();
   const daily = dailyMap(trades);
   const ds = dayStreaks(daily);
 
@@ -520,6 +532,9 @@ function renderDashboard(trades, s, from, to) {
   $('#avgLoss').textContent = money(-s.avgLoss || null);
 
   renderWarnings(s, ds);
+  renderPositions();
+  refreshPositions();
+  renderDashTiming(trades);
 
   // cumulative P&L
   const tradeAt = new Map(trades.map(t => [t.time, t]));
@@ -576,12 +591,20 @@ function renderDashboard(trades, s, from, to) {
 
 // ---- warnings line: the three most serious, critical first ----
 const WARN_ICON = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1.8 15 14H1z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><path d="M8 6.2v3.6M8 11.6v.4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>';
+let warnArgs = null;
 function renderWarnings(s, ds) {
+  warnArgs = [s, ds];
   const box = $('#warnings');
   const list = warnings({ recent: scoped(), s, ds, keyDaysLeft: status?.key?.daysLeft ?? null, fmt: v => money(v), fmtAgo: ago });
   const dl = lossToday();
   if (dl.hit) list.push({ level: 'critical', rank: 99, text: `Daily loss limit hit: ${money(dl.net)} today`, detail: `That's ${dl.lossPct.toFixed(1)}% of the account, past your ${WARN.dailyLossPct}% limit. Stop for today.` });
   else if (dl.used >= 0.5) list.push({ level: 'warning', rank: 85, text: `Down ${dl.lossPct.toFixed(1)}% today · limit ${WARN.dailyLossPct}%`, detail: `${money(dl.net)} today. ${money(-(dl.limit + dl.net), { sign: false })} left before the daily limit.` });
+  for (const p of positions?.available ? positions.positions : []) {
+    const name = `${p.symbol} ${p.dir.toLowerCase()}`;
+    if (!p.sl) list.push({ level: 'critical', rank: 97, text: `No stop-loss on ${name}`, detail: `This open position has no stop-loss. ${p.liq ? `Nothing stops it before liquidation at ${price(p.liq)}.` : ''}` });
+    if (p.liqDistance !== null && p.liqDistance < 0.04) list.push({ level: 'critical', rank: 98, text: `${name} is ${pct(p.liqDistance, 1)} from liquidation`, detail: `Mark ${price(p.mark)}, liquidation ${price(p.liq)}.` });
+    if (p.sl && p.slLoss < 0 && dl.limit && -(dl.net + p.slLoss) >= dl.limit) list.push({ level: 'warning', rank: 88, text: `Stop-out on ${name} breaks today’s limit`, detail: `If the stop at ${price(p.sl)} hits, you lose ${money(p.slLoss)}, taking today past your ${WARN.dailyLossPct}% daily loss limit.` });
+  }
   const ck = checkin();
   if (!ck.complete) {
     list.push({ level: 'warning', rank: 80, text: 'Daily check-in not done', detail: `${ck.affirmed.length} of ${ck.list.length} commitments affirmed${ck.wrote ? '' : ', and nothing written in today’s journal yet'}. Finish it at the top of the dashboard before you trade.` });
@@ -644,7 +667,7 @@ function paintAccount() {
   }
   countTo($('#equityValue'), account.equity, v => money(v, { sign: false, dp: 2 }));
   const parts = [];
-  if (account.unrealized !== null) parts.push(`${money(account.unrealized)} unrealized`);
+  if (account.unrealized !== null) parts.push(`${posPnlHidden ? MASK : money(account.unrealized)} unrealized`);
   if (account.wallet !== null) parts.push(`${money(account.wallet, { sign: false })} wallet`);
   $('#equitySub').textContent = parts.join(' · ') + ` · as of ${time(account.at)}`;
   $('#equityNote').hidden = false;
@@ -770,6 +793,182 @@ function renderThisWeek(rangeTrades) {
   });
 }
 
+// ---- recap of the last trading day ----
+// Every trade, not the current filters: like the daily loss limit, it's about
+// what you actually did. Collapsing it lasts until the next day's recap.
+function renderRecap() {
+  const card = $('#recapCard');
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const last = [...all].reverse().find(t => t.time < today.getTime());
+  if (!last) { card.hidden = true; return; }
+  card.hidden = false;
+  const day = new Date(last.time); day.setHours(0, 0, 0, 0);
+  const k = dayKey(day);
+  const yesterday = today.getTime() - day.getTime() <= DAY + 3_600_000;     // allow for a daylight-saving day
+  const r = dayRecap(all, day.getTime(), {
+    equity: account?.available ? account.equity : null, tagsOf, noted: hasNote,
+    checkinDone: checkinDoneOn(k), journaled: journalHas(k), fmt: v => money(v), fmtDur: fmtDuration,
+  });
+
+  $('#rcKicker').textContent = yesterday ? 'Yesterday’s recap' : 'Last trading day';
+  $('#rcTitle').replaceChildren(document.createTextNode(longDate(day) + ' · '), el('span', sign(r.s.net), money(r.s.net)));
+  $('#rcJournal').href = `#journal/${k}`;
+  $('#rcJournal').textContent = journalHas(k) ? 'Journal entry' : 'Write journal entry';
+
+  // collapsed, it's one line like the check-in: the day, its result, trades and rules missed
+  const collapsed = store.get('recapCollapsed', null) === k;
+  card.classList.toggle('collapsed', collapsed);
+  $('#rcBody').hidden = collapsed;
+  const missed = r.rules.filter(x => x.ok === false).length;
+  $('#rcPeek').textContent = collapsed ? `${tradesWord(r.s.n)} · ${missed ? `${missed} rule${missed === 1 ? '' : 's'} missed` : 'all rules kept'}` : '';
+  if (collapsed) $('#rcTitle').replaceChildren(document.createTextNode(day.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' }) + ' · '), el('span', sign(r.s.net), money(r.s.net)));
+  const btn = $('#rcCollapse');
+  btn.setAttribute('aria-expanded', String(!collapsed));
+  btn.title = collapsed ? 'Expand' : 'Collapse';
+  const toggle = () => { store.set('recapCollapsed', collapsed ? null : k); renderRecap(); };
+  btn.onclick = e => { e.stopPropagation(); toggle(); };
+  card.querySelector('.recap-head').onclick = e => { if (collapsed && !e.target.closest('a, button')) toggle(); };
+  if (collapsed) return;
+
+  // numbers
+  const st = [
+    ['Trades', `${r.s.n} · ${r.s.wins}W ${r.s.losses}L`],
+    ['Win rate', pct(r.s.winRate)],
+    ['Best trade', r.best ? `${money(r.best.pnl)} ${r.best.symbol}` : '—', r.best ? 'pos' : ''],
+    ['Worst trade', r.worst ? `${money(r.worst.pnl)} ${r.worst.symbol}` : '—', r.worst ? 'neg' : ''],
+    ['Fees + funding', money(-r.costs)],
+    ['Your usual day', r.avgDay === null ? '—' : `${money(r.avgDay)} · ${r.avgTrades.toFixed(1)} trades`],
+  ];
+  $('#rcStats').replaceChildren(...st.map(([dt, dd, cls]) => { const d = el('div'); d.append(el('dt', '', dt), el('dd', cls || '', dd)); return d; }));
+
+  // rules
+  $('#rcRules').replaceChildren(...r.rules.map(x => {
+    const li = el('li', x.ok === null ? 'na' : x.ok ? 'ok' : 'bad');
+    li.append(el('i', '', x.ok === null ? '–' : x.ok ? '✓' : '✗'), el('b', '', x.label), el('small', 'muted', x.detail));
+    return li;
+  }));
+
+  // notes: the day's journal and every trade's tags and note
+  const notes = $('#rcNotes'); notes.replaceChildren();
+  const j = journalEntry(k)?.text?.trim();
+  if (j) notes.append(el('blockquote', 'recap-journal', j.length > 280 ? j.slice(0, 280) + '…' : j));
+  const list = el('ul', 'recap-trades');
+  for (const t of r.trades) {
+    const li = el('li');
+    const b = el('button', 'recap-trade'); b.type = 'button';
+    b.append(el('span', 'rt-name', `${time(t.time)} ${t.symbol} ${t.dir.toLowerCase()}`), el('span', 'rt-pnl ' + sign(t.pnl), money(t.pnl)));
+    const tags = tagsOf(t);
+    if (tags.length || hasNote(t)) {
+      const meta = el('span', 'rt-meta');
+      meta.append(...tags.map(tag => tagChip(tag)));
+      if (hasNote(t)) meta.append(el('span', 'rt-note', noteOf(t).text.length > 120 ? noteOf(t).text.slice(0, 120) + '…' : noteOf(t).text));
+      b.append(meta);
+    } else b.append(el('span', 'rt-meta muted small', 'No tags yet. Click to add.'));
+    b.onclick = () => openReplay(t, r.trades, replayCtx());
+    li.append(b); list.append(li);
+  }
+  notes.append(list);
+
+  $('#rcTips').replaceChildren(...r.suggestions.map(x => el('li', '', x)));
+}
+
+// ---- open positions: live from Bybit while the dashboard is open ----
+const POS_EVERY = 15_000;
+let positions = null, posBusy = false;
+async function refreshPositions(force = false) {
+  if (posBusy || (!force && positions && Date.now() - positions.at < POS_EVERY - 1000)) return;
+  posBusy = true;
+  $('#posLive').classList.add('busy');
+  try { positions = await apiJson('/api/positions'); }
+  catch (e) { positions = { available: false, error: e.message, at: Date.now() }; }
+  finally { posBusy = false; $('#posLive').classList.remove('busy'); }
+  if (view === 'dashboard') { renderPositions(); if (warnArgs) renderWarnings(...warnArgs); }
+}
+setInterval(() => { if (view === 'dashboard' && !document.hidden) refreshPositions(); }, POS_EVERY);
+document.addEventListener('visibilitychange', () => { if (!document.hidden && view === 'dashboard') refreshPositions(); });
+$('#posRefresh').onclick = () => refreshPositions(true);
+setInterval(() => { if (positions && view === 'dashboard') $('#posAt').textContent = `updated ${agoShort(positions.at)}`; }, 5000);
+// Unrealized P&L on open positions is hidden until you choose to see it; remembered in this browser.
+let posPnlHidden = store.get('hidePosPnl', true);
+function paintPosEye() {
+  const b = $('#posEye');
+  b.innerHTML = posPnlHidden ? EYE_SHUT : EYE_OPEN;
+  b.setAttribute('aria-pressed', String(posPnlHidden));
+  const label = posPnlHidden ? 'Show unrealized P&L' : 'Hide unrealized P&L';
+  b.setAttribute('aria-label', label); b.title = label;
+}
+$('#posEye').onclick = () => { posPnlHidden = !posPnlHidden; store.set('hidePosPnl', posPnlHidden); paintPosEye(); renderPositions(); paintAccount(); };
+paintPosEye();
+const agoShort = ms => { const s = Math.round((Date.now() - ms) / 1000); return s < 10 ? 'just now' : s < 60 ? `${s}s ago` : `${Math.round(s / 60)} min ago`; };
+
+// An open position in the shape the replay expects, running up to now.
+const positionTrade = p => ({
+  open: true, id: p.id, symbol: p.symbol, category: p.category, dir: p.dir, size: p.size, leverage: p.leverage,
+  entry: p.entry, exit: p.mark, pnl: p.upnl, fees: 0, funding: 0, sl: p.sl, tp: p.tp, liq: p.liq, hidePnl: posPnlHidden,
+  openedAt: p.openedAt, time: Date.now(), duration: p.openedAt ? Date.now() - p.openedAt : null,
+});
+
+function renderPositions() {
+  const list = $('#posList');
+  if (!positions) { list.replaceChildren(el('p', 'muted small', 'Checking Bybit for open positions…')); return; }
+  $('#posAt').textContent = `updated ${agoShort(positions.at)}`;
+  if (!positions.available) {
+    $('#posCount').textContent = ''; $('#posTotal').textContent = '';
+    list.replaceChildren(el('p', 'muted small', positions.error ? `Couldn’t read open positions: ${positions.error}` : 'Open positions need a connected read-only key.'));
+    return;
+  }
+  const ps = [...positions.positions].sort((a, b) => b.value - a.value);
+  $('#posCount').textContent = ps.length ? `· ${ps.length}` : '';
+  const total = ps.reduce((n, p) => n + p.upnl, 0);
+  $('#posEye').hidden = !ps.length;
+  $('#posTotal').replaceChildren(...(ps.length ? [el('span', 'muted small', 'Unrealized '), posPnlHidden ? el('b', 'masked', '$' + MASK) : el('b', sign(total), money(total))] : []));
+  if (!ps.length) { list.replaceChildren(el('p', 'muted small pos-none', 'No open positions.')); return; }
+
+  // what a stop-out would do to today's daily loss limit
+  const lt = lossToday();
+  list.replaceChildren(...ps.map(p => {
+    const row = el('div', 'pos-row');
+    const name = el('div', 'pos-name');
+    name.append(el('b', '', p.symbol), el('span', 'pos-side ' + (p.dir === 'Long' ? 'long' : 'short'), `${p.dir} ${p.leverage}×`));
+    name.append(el('small', 'muted', `${p.size.toLocaleString(undefined, { maximumFractionDigits: 6 })} · ${compact(p.value)} · ${p.openedAt ? 'open ' + fmtDuration(Date.now() - p.openedAt) : 'open over 7 days'}`));
+
+    const pnl = el('div', 'pos-pnl');
+    if (posPnlHidden) pnl.append(el('b', 'masked', '$' + MASK), el('small', 'muted', `${MASK} on margin`));
+    else pnl.append(el('b', sign(p.upnl), money(p.upnl)), el('small', 'muted', `${signedPct(p.upnlPct)} on margin`));
+
+    const px = el('div', 'pos-cell');
+    px.append(el('span', 'kicker', 'Entry → mark'), el('span', 'num', `${price(p.entry)} → ${price(p.mark)}`));
+
+    // distance to liquidation: amber under 10%, red under 4%
+    const liq = el('div', 'pos-cell');
+    const dist = p.liqDistance;
+    const lvl = dist === null ? '' : dist < 0.04 ? 'danger' : dist < 0.1 ? 'warn' : 'ok';
+    liq.append(el('span', 'kicker', 'Liquidation'), el('span', 'num ' + lvl, p.liq ? `${price(p.liq)} · ${pct(dist, 1)} away` : 'none'));
+    if (dist !== null) { const bar = el('i', 'liq-bar ' + lvl); bar.style.setProperty('--w', Math.min(1, dist / 0.25) * 100 + '%'); liq.append(bar); }
+
+    const sl = el('div', 'pos-cell');
+    sl.append(el('span', 'kicker', 'Stop-loss'));
+    if (!p.sl) sl.append(el('span', 'num danger', 'No stop-loss set'));
+    else {
+      sl.append(el('span', 'num', `${price(p.sl)} · ${money(p.slLoss)} if hit`));
+      if (lt.limit && p.slLoss < 0) {
+        const after = -(lt.net + p.slLoss), share = after / lt.limit;
+        sl.append(el('small', share >= 1 ? 'danger' : share >= 0.75 ? 'warn' : 'muted', share >= 1 ? `Breaks today’s ${WARN.dailyLossPct}% loss limit` : `${pct(Math.max(0, share))} of today’s loss limit`));
+      } else if (p.slLoss >= 0) sl.append(el('small', 'pos', 'Locks in profit'));
+    }
+
+    const tp = el('div', 'pos-cell');
+    tp.append(el('span', 'kicker', 'Take-profit'), el('span', 'num', p.tp ? `${price(p.tp)} · ${money(p.tpGain)}` : 'none'));
+    if (p.sl && p.tp && p.slLoss < 0) tp.append(el('small', 'muted', `${(p.tpGain / -p.slLoss).toFixed(1)} R reward to risk`));
+
+    const btn = el('button', 'btn small-btn', 'Replay');
+    btn.type = 'button';
+    btn.onclick = () => openReplay(positionTrade(p), [positionTrade(p)], replayCtx());
+    row.append(name, pnl, px, liq, sl, tp, btn);
+    return row;
+  }));
+}
+
 // ---- best hour ----
 function renderBestHour(trades) {
   const hours = byHour(trades);
@@ -878,15 +1077,228 @@ function renderAnalytics(trades, s, from, to) {
   }
   t.append(thead, body);
 
-  const bars = arr => arr.map(d => ({ label: d.label, value: d.net, tipTitle: d.label, tipRows: [pnlRow(d.net), { value: String(d.n), label: 'trades' }, ...(d.n ? [{ value: pct(d.winRate), label: 'win rate' }] : [])] }));
-  columnChart($('#weekdayChart'), { bars: bars(byWeekday(trades)), fmtTick: compact, height: 200, label: 'Net P&L by weekday' });
-  columnChart($('#hourChart'), { bars: bars(byHour(trades)).map(b => ({ ...b, tipTitle: `${b.label}:00 – ${b.label}:59` })), fmtTick: compact, height: 200, labelEvery: 3, label: 'Net P&L by hour' });
+  renderTags(trades);
+  renderTiming(trades);
+  renderHold(trades);
+  renderCosts(trades);
 
   const bins = histogram(trades);
   columnChart($('#histChart'), {
     fmtTick: v => String(Math.round(v)), height: 200, label: 'Distribution of trade P&L', colorBy: b => (b.mid >= 0 ? 'pos' : 'neg'),
     bars: bins.map(b => ({ label: compact(b.from), value: b.n, mid: (b.from + b.to) / 2, tipTitle: `${money(b.from)} to ${money(b.to)}`, tipRows: [{ value: String(b.n), label: b.n === 1 ? 'trade' : 'trades' }] })),
   });
+}
+
+// ---- by tag ----
+function renderTags(trades) {
+  const rows = tagStats(trades, tagsOf);
+  const tagged = trades.filter(t => tagsOf(t).length).length;
+  const mistakes = rows.filter(r => r.kind === 'mistake');
+  const cost = trades.filter(t => tagsOf(t).some(x => tagKind(x) === 'mistake')).reduce((n, t) => n + t.pnl, 0);
+  $('#tagSub').textContent = !tagged ? 'Tag trades from their replay (click any trade) to see which habits make or cost you money.'
+    : `${tradesWord(tagged)} of ${trades.length.toLocaleString()} tagged.` + (mistakes.length ? ` Trades with a mistake tag netted ${money(cost)}.` : '');
+  sortableTable($('#tagTable'), rows, [
+    { key: 'key', label: 'Tag', cell: v => { const td = el('td'); td.append(tagChip(v)); return td; }, fmt: v => v, align: 'left' },
+    { key: 'n', label: 'Trades', fmt: v => v.toLocaleString() },
+    { key: 'winRate', label: 'Win rate', fmt: v => pct(v) },
+    { key: 'net', label: 'Net P&L', fmt: v => money(v) },
+    { key: 'expectancy', label: 'Per trade', fmt: v => money(v) },
+  ], { sort: 'net', dir: 1 });
+}
+
+// ---- timing: when you open vs when you close ----
+const fmtHour = h => new Date(2000, 0, 1, h).toLocaleTimeString(undefined, { hour: 'numeric' });
+const tradesWord = n => `${n.toLocaleString()} trade${n === 1 ? '' : 's'}`;
+const statRows = d => [pnlRow(d.net), { value: String(d.n), label: d.n === 1 ? 'trade' : 'trades' }, ...(d.n ? [{ value: pct(d.winRate), label: 'win rate' }, { value: money(d.expectancy), label: 'per trade' }] : [])];
+
+// Weekday × hour heatmap of where entries pay; `every` spaces the hour labels.
+function paintOpenGrid(box, grid, every) {
+  const scale = scaleOf(grid.flat().filter(c => c.n).map(c => c.net));
+  const head = [el('span'), ...Array.from({ length: 24 }, (_, h) => el('span', 'og-hour', h % every === 0 ? fmtHour(h) : ''))];
+  const rows = grid.flatMap((row, d) => [el('span', 'og-day', every > 3 ? WEEKDAYS[d].slice(0, 2) : WEEKDAYS[d]), ...row.map(c => {
+    const i = el('i', c.n ? heatClass(c.net, scale) : 'heat-none');
+    if (c.n) { i.tabIndex = 0; tipOn(i, `${WEEKDAYS[d]} ${fmtHour(c.h)} – ${fmtHour((c.h + 1) % 24)}, opened`, statRows(c)); }
+    return i;
+  })]);
+  box.replaceChildren(...head, ...rows);
+}
+const windowLabel = w => `${WEEKDAYS[w.d]} ${fmtHour(w.h)} – ${fmtHour((w.h + 2) % 24)}`;
+
+// ---- dashboard: the timing highlights, all by when trades were opened ----
+function renderDashTiming(trades) {
+  const at = t => t.openedAt;
+  const known = trades.filter(t => Number.isFinite(t.openedAt)).length;
+  const missing = known < trades.length ? ` · ${tradesWord(trades.length - known)} without a known open left out` : '';
+
+  // best time to open
+  const { best, worst } = openWindows(trades);
+  const grid = openGrid(trades);
+  if (!known) {
+    $('#dOpenValue').textContent = '—';
+    $('#dOpenSub').textContent = trades.length ? 'No known open times in this range. They come from your fills.' : '';
+    $('#dOpenGrid').replaceChildren(); $('#dOpenAvoid').textContent = '';
+  } else {
+    const b = best[0];
+    $('#dOpenValue').textContent = b ? windowLabel(b) : '—';
+    $('#dOpenSub').textContent = b ? `${money(b.net)} over ${tradesWord(b.n)}, ${pct(b.winRate)} won` : 'No 2-hour window with 3+ trades is in profit yet';
+    paintOpenGrid($('#dOpenGrid'), grid, 6);
+    const w = worst[0];
+    $('#dOpenAvoid').replaceChildren(...(w ? [el('span', '', 'Worst: '), el('b', 'neg', windowLabel(w)), document.createTextNode(` ${money(w.net)} over ${tradesWord(w.n)}`)] : []));
+  }
+
+  // sessions
+  const ses = bySession(trades, at).filter(x => x.n);
+  const top = ses.length ? ses.reduce((a, b) => (b.net > a.net ? b : a)) : null;
+  $('#dSesValue').textContent = top && top.net > 0 ? top.label : '—';
+  $('#dSesSub').textContent = top && top.net > 0 ? `${money(top.net)} over ${tradesWord(top.n)}, ${pct(top.winRate)} won${missing}` : ses.length ? `No session is in profit${missing}` : '';
+  hbarChart($('#dSesChart'), {
+    label: 'Net P&L by session opened',
+    rows: ses.map(x => ({ label: x.short, value: x.net, valueText: signedCompact(x.net), tipTitle: `${x.label} · ${String(x.from).padStart(2, '0')}–${String(x.to).padStart(2, '0')} UTC`, tipRows: statRows(x) })),
+  });
+
+  // best hold time
+  const h = holdOutcome(trades);
+  $('#dHoldValue').textContent = h.best ? h.best.label : '—';
+  $('#dHoldValue').className = 'mid-value' + (h.best ? ' pos' : '');
+  $('#dHoldSub').textContent = h.best
+    ? `${money(h.best.expectancy)} per trade over ${tradesWord(h.best.n)}, ${pct(h.best.winRate)} won`
+    : h.known ? `No hold time with ${h.minN}+ trades is profitable on average` : trades.length ? 'No known hold times in this range' : '';
+  columnChart($('#dHoldChart'), {
+    fmtTick: compact, height: 140, label: 'Net P&L by hold time',
+    colorBy: b => (b.best ? 'pos best' : b.value >= 0 ? 'pos' : 'neg'),
+    bars: h.buckets.filter(b => b.n).map(b => ({ label: b.label, value: b.net, best: b.label === h.best?.label, tipTitle: `Held ${b.label}`, tipRows: [...statRows(b), { value: fmtDuration(b.avgHold), label: 'average hold' }] })),
+  });
+  $('#dHoldAvg').textContent = h.known ? `Average hold: winners ${fmtDuration(h.avgWin)}, losers ${fmtDuration(h.avgLoss)}` : '';
+}
+document.querySelectorAll('[data-goto]').forEach(a => a.addEventListener('click', e => {
+  e.preventDefault();
+  timeBasis = 'open'; store.set('timeBasis', timeBasis);
+  setView('analytics');
+  requestAnimationFrame(() => $('#' + a.dataset.goto)?.closest('.card')?.scrollIntoView({ behavior: calm() ? 'auto' : 'smooth', block: 'start' }));
+}));
+
+function renderTiming(trades) {
+  const opened = trades.filter(t => Number.isFinite(t.openedAt)).length;
+  const byOpen = timeBasis === 'open';
+  const at = byOpen ? t => t.openedAt : t => t.time;
+  const verb = byOpen ? 'opened' : 'closed';
+  for (const b of document.querySelectorAll('.seg [data-basis]')) b.setAttribute('aria-pressed', String(b.dataset.basis === timeBasis));
+  $('#timingSub').textContent = byOpen
+    ? `By when each position was opened. ${opened < trades.length ? `${tradesWord(trades.length - opened)} opened before your pulled data, so they're left out.` : ''}`
+    : 'By when each position was closed.';
+  $('#weekdaySub').textContent = `Net P&L by the day a trade was ${verb}, in your local time`;
+  $('#hourSub2').textContent = `Net P&L by the hour a trade was ${verb}, in your local time`;
+
+  const bars = arr => arr.map(d => ({ label: d.label, value: d.net, tipTitle: d.label, tipRows: statRows(d) }));
+  columnChart($('#weekdayChart'), { bars: bars(byWeekday(trades, at)), fmtTick: compact, height: 180, label: `Net P&L by weekday ${verb}` });
+  columnChart($('#hourChart'), { bars: bars(byHour(trades, at)).map(b => ({ ...b, tipTitle: `${b.label}:00 – ${b.label}:59` })), fmtTick: compact, height: 180, labelEvery: 3, label: `Net P&L by hour ${verb}` });
+
+  // sessions
+  const ses = bySession(trades, at);
+  const utcSpan = x => `${String(x.from).padStart(2, '0')}–${String(x.to).padStart(2, '0')} UTC`;
+  const localHour = h => { const d = new Date(); d.setUTCHours(h, 0, 0, 0); return d.getHours(); };
+  const localSpan = x => `${fmtHour(localHour(x.from))}–${fmtHour(localHour(x.to % 24))}`;
+  $('#sessionSub').textContent = `Net P&L by the session a trade was ${verb} in. Sessions are fixed UTC hours.`;
+  hbarChart($('#sessionChart'), {
+    label: `Net P&L by session ${verb}`,
+    rows: ses.filter(x => x.n).map(x => ({ label: x.label, value: x.net, valueText: signedCompact(x.net), tipTitle: `${x.label} · ${utcSpan(x)}`, tipRows: [...statRows(x), { value: localSpan(x), label: 'your time' }] })),
+  });
+  sortableTable($('#sessionTable'), ses.map(x => ({ ...x, hours: x.from })), [
+    { key: 'label', label: 'Session', fmt: (v, r) => v, align: 'left' },
+    { key: 'hours', label: 'Your time', fmt: (v, r) => localSpan(r), align: 'left' },
+    { key: 'n', label: 'Trades', fmt: v => v.toLocaleString() },
+    { key: 'winRate', label: 'Win rate', fmt: v => pct(v) },
+    { key: 'net', label: 'Net P&L', fmt: v => money(v) },
+    { key: 'expectancy', label: 'Per trade', fmt: v => money(v) },
+  ], { sort: 'hours', dir: 1 });
+
+  // weekday × hour of the open
+  const grid = openGrid(trades);
+  const cells = grid.flat().filter(c => c.n);
+  const box = $('#openGrid');
+  if (!cells.length) {
+    box.replaceChildren(el('p', 'empty', 'No trades with a known open time in this range. Opens come from your fills, so pull a range that covers them.'));
+    $('#bestWindows').replaceChildren(); $('#worstWindows').replaceChildren();
+    return;
+  }
+  paintOpenGrid(box, grid, 3);
+
+  const { best, worst } = openWindows(trades);
+  const win = w => {
+    const li = el('li');
+    li.append(el('b', '', windowLabel(w)), el('span', 'num ' + sign(w.net), money(w.net)), el('small', 'muted', `${tradesWord(w.n)} · ${pct(w.winRate)} won · ${money(w.expectancy)} per trade`));
+    return li;
+  };
+  const none = msg => el('li', 'muted small', msg);
+  $('#bestWindows').replaceChildren(...(best.length ? best.map(win) : [none('No 2-hour window with 3+ trades is in profit yet.')]));
+  $('#worstWindows').replaceChildren(...(worst.length ? worst.map(win) : [none('No 2-hour window with 3+ trades is losing.')]));
+}
+document.querySelectorAll('.seg [data-basis]').forEach(b => b.addEventListener('click', () => {
+  timeBasis = b.dataset.basis; store.set('timeBasis', timeBasis); render();
+}));
+
+// ---- hold time vs outcome ----
+function renderHold(trades) {
+  const h = holdOutcome(trades);
+  $('#holdSub').textContent = h.known
+    ? `Net P&L by how long each position was open${h.unknown ? `. ${tradesWord(h.unknown)} opened before your pulled data and aren't counted.` : ''}`
+    : 'Hold times come from your fills. None of the trades in this range have a known open.';
+  $('#holdBest').textContent = h.best ? h.best.label : '—';
+  $('#holdBest').className = h.best ? 'pos' : '';
+  $('#holdBestSub').textContent = h.best
+    ? `${money(h.best.expectancy)} per trade over ${tradesWord(h.best.n)}, ${pct(h.best.winRate)} won`
+    : h.known ? `No hold time with ${h.minN}+ trades is profitable on average` : '';
+  $('#holdWin').textContent = fmtDuration(h.avgWin);
+  $('#holdLoss').textContent = fmtDuration(h.avgLoss);
+  const shown = h.buckets.filter(b => b.n);
+  columnChart($('#holdChart'), {
+    fmtTick: compact, height: 200, label: 'Net P&L by hold time', labelEvery: 1,
+    bars: shown.map(b => ({ label: b.label, value: b.net, tipTitle: `Held ${b.label}`, tipRows: [...statRows(b), { value: fmtDuration(b.avgHold), label: 'average hold' }] })),
+  });
+  sortableTable($('#holdTable'), shown.map((b, i) => ({ ...b, order: h.buckets.indexOf(b) })), [
+    { key: 'order', label: 'Held', fmt: (v, r) => r.label + (r.label === h.best?.label ? ' ★' : ''), align: 'left' },
+    { key: 'n', label: 'Trades', fmt: v => v.toLocaleString() },
+    { key: 'winRate', label: 'Win rate', fmt: v => pct(v) },
+    { key: 'net', label: 'Net P&L', fmt: v => money(v) },
+    { key: 'expectancy', label: 'Per trade', fmt: v => money(v) },
+    { key: 'avgHold', label: 'Avg hold', fmt: v => fmtDuration(v) },
+  ], { sort: 'order', dir: 1 });
+}
+
+// ---- fees and funding ----
+function renderCosts(trades) {
+  const c = costBreakdown(trades);
+  const rows = [
+    ['Price P&L', money(c.gross), 'before any costs', sign(c.gross)],
+    ['Trading fees', money(-c.fees), c.feeRate !== null ? `${(c.feeRate * 100).toFixed(3)}% of position value, open + close` : ''],
+    ['Funding', money(c.fundingReceived - c.fundingPaid), `paid ${money(c.fundingPaid, { sign: false })}, received ${money(c.fundingReceived, { sign: false })}`],
+    ['Net P&L', money(c.net), 'what you kept', sign(c.net)],
+    ['Costs vs winnings', pct(c.costShare, 1), 'of your gross winning trades went to fees and funding'],
+    ['Cost per trade', money(c.perTrade === null ? null : -c.perTrade), `over ${tradesWord(trades.length)}`],
+    ['Wins turned into losses', String(c.flipped), c.flipped ? `trades that made money on price but lost after ${money(c.flippedCost, { sign: false })} of costs` : 'no winning trade was erased by costs'],
+  ];
+  $('#costStats').replaceChildren(...rows.map(([k, v, sub, cls]) => {
+    const d = el('div'); const dd = el('dd', cls || '', v);
+    d.append(el('dt', '', k), dd); if (sub) d.append(el('small', 'muted', sub));
+    return d;
+  }));
+  columnChart($('#costMonthChart'), {
+    fmtTick: compact, height: 200, label: 'Costs by month', colorBy: () => 'neg',
+    bars: c.months.map(m => {
+      const cost = m.fees + m.funding;
+      return { label: new Date(m.start).toLocaleDateString(undefined, { month: 'short', year: '2-digit' }), value: cost,
+        tipTitle: new Date(m.start).toLocaleDateString(undefined, { month: 'long', year: 'numeric' }),
+        tipRows: [{ value: money(-m.fees), label: 'fees', key: 'neg' }, { value: money(-m.funding), label: 'funding' }, { value: money(m.gross), label: 'price P&L' }, { value: money(m.net), label: 'net' }] };
+    }),
+  });
+  sortableTable($('#costTable'), c.markets, [
+    { key: 'key', label: 'Market', fmt: v => v, align: 'left' },
+    { key: 'n', label: 'Trades', fmt: v => v.toLocaleString() },
+    { key: 'fees', label: 'Fees', fmt: v => money(-v) },
+    { key: 'funding', label: 'Funding', fmt: v => money(-v) },
+    { key: 'feeRate', label: 'Fee rate', fmt: v => (v === null ? '—' : (v * 100).toFixed(3) + '%') },
+    { key: 'net', label: 'Net P&L', fmt: v => money(v) },
+  ], { sort: 'fees', dir: -1 });
 }
 
 // ===== tables =====
@@ -906,7 +1318,7 @@ function sortableTable(table, rows, cols, init) {
     }
     const thead = el('thead'); thead.append(head);
     const body = el('tbody');
-    for (const r of sorted) { const tr = el('tr'); for (const c of cols) tr.append(el('td', c.align === 'left' ? '' : 'num', c.fmt(r[c.key], r))); body.append(tr); }
+    for (const r of sorted) { const tr = el('tr'); for (const c of cols) tr.append(c.cell ? c.cell(r[c.key], r) : el('td', c.align === 'left' ? '' : 'num', c.fmt(r[c.key], r))); body.append(tr); }
     table.append(thead, body);
   };
   draw();
@@ -918,6 +1330,7 @@ const TRADE_COLS = [
   { key: 'symbol', label: 'Market', fmt: (v, t) => v + (t.liquidation ? ' · liquidated' : t.adl ? ' · ADL' : ''), align: 'left' },
   { key: 'dir', label: 'Side', fmt: v => v, align: 'left' },
   { key: 'strategyName', label: 'Strategy', cell: (v, t) => strategyCell(t), align: 'left' },
+  { key: 'tagsText', label: 'Tags', cell: (v, t) => tagsCell(t), align: 'left' },
   { key: 'size', label: 'Size', fmt: v => v.toLocaleString(undefined, { maximumFractionDigits: 6 }) },
   { key: 'entry', label: 'Entry', fmt: price },
   { key: 'exit', label: 'Exit', fmt: price },
@@ -929,7 +1342,7 @@ const TRADE_COLS = [
 ];
 const DAY_COLS = [{ ...TRADE_COLS[0], label: 'Time', fmt: v => time(v) }, ...TRADE_COLS.slice(1)];
 
-function tradeTable(table, rows, cols, state) {
+function tradeTable(table, rows, cols, state, replayList = rows) {
   table.replaceChildren();
   const head = el('tr');
   for (const c of cols) {
@@ -945,19 +1358,53 @@ function tradeTable(table, rows, cols, state) {
   const thead = el('thead'); thead.append(head);
   const body = el('tbody');
   for (const t of rows) {
-    const r = { ...t, rom: t.margin > 0 ? t.pnl / t.margin : null, strategyName: strategyName(strategyOf(t)) };
-    const tr = el('tr'); if (t.liquidation) tr.className = 'liq';
+    const r = { ...t, rom: t.margin > 0 ? t.pnl / t.margin : null, strategyName: strategyName(strategyOf(t)), tagsText: tagsOf(t).join(', ') };
+    const tr = el('tr', 'replayable' + (t.liquidation ? ' liq' : ''));
+    tr.tabIndex = 0;
+    tr.title = 'Replay this trade';
+    const replay = e => { if (e.target.closest('select, button, input, a')) return; openReplay(t, replayList, replayCtx()); };
+    tr.addEventListener('click', replay);
+    tr.addEventListener('keydown', e => { if (e.key === 'Enter' && e.target === tr) replay(e); });
     for (const c of cols) tr.append(c.cell ? c.cell(r[c.key], r) : el('td', c.align === 'left' ? '' : 'num', c.fmt(r[c.key], r)));
     body.append(tr);
   }
   table.append(thead, body);
 }
 
+const replayCtx = () => ({ apiJson, notes: notesPanel, fmt: { money, price, dateTime, duration: fmtDuration } });
+
+function tagsCell(t) {
+  const td = el('td', 'tags-cell');
+  const tags = tagsOf(t);
+  td.append(...tags.slice(0, 2).map(tag => tagChip(tag)));
+  if (tags.length > 2) td.append(el('span', 'muted small', `+${tags.length - 2}`));
+  if (hasNote(t)) { const n = el('span', 'note-mark', '✎'); n.title = noteOf(t).text; n.setAttribute('aria-label', 'Has a note'); td.append(n); }
+  return td;
+}
+
+// Tag filter on the Trades view: any tag, untagged, any mistake.
+function paintTagFilter() {
+  const sel = $('#tagFilter'), cur = tableState.tag || 'all';
+  const used = new Set(Object.values(notesAll()).flatMap(n => n.tags || []));
+  const opts = [['all', 'All tags'], ['untagged', 'No tags or notes'], ['mistake', 'Any mistake tag'], ['good', 'Any good-habit tag'],
+    ...allTags().filter(t => used.has(t)).map(t => [t, t])];
+  sel.replaceChildren(...opts.map(([v, l]) => new Option(l, v)));
+  sel.value = opts.some(([v]) => v === cur) ? cur : 'all';
+  tableState.tag = sel.value;
+}
+$('#tagFilter').onchange = e => { tableState.tag = e.target.value; tableState.shown = 50; render(); };
+const tagMatch = t => {
+  const f = tableState.tag || 'all', tags = tagsOf(t);
+  return f === 'all' ? true : f === 'untagged' ? !tags.length && !hasNote(t) : f === 'mistake' || f === 'good' ? tags.some(x => tagKind(x) === f) : tags.includes(f);
+};
+
 function renderTrades(trades) {
   const { sort, dir } = tableState;
-  const rows = trades.map(t => ({ ...t, rom: t.margin > 0 ? t.pnl / t.margin : null, strategyName: strategyName(strategyOf(t)) }))
+  paintTagFilter();
+  trades = trades.filter(tagMatch);
+  const rows = trades.map(t => ({ ...t, rom: t.margin > 0 ? t.pnl / t.margin : null, strategyName: strategyName(strategyOf(t)), tagsText: tagsOf(t).join(', ') }))
     .sort((a, b) => { const x = a[sort], y = b[sort]; return (typeof x === 'string' ? x.localeCompare(y) : (x ?? -Infinity) - (y ?? -Infinity)) * dir; });
-  tradeTable($('#tradeTable'), rows.slice(0, tableState.shown), TRADE_COLS, tableState);
+  tradeTable($('#tradeTable'), rows.slice(0, tableState.shown), TRADE_COLS, tableState, rows);
   const more = $('#moreBtn');
   more.hidden = rows.length <= tableState.shown;
   more.textContent = `Show ${Math.min(100, rows.length - tableState.shown)} more of ${rows.length - tableState.shown}`;
@@ -966,10 +1413,10 @@ function renderTrades(trades) {
 }
 
 function exportCsv() {
-  const cols = ['time', 'symbol', 'category', 'dir', 'size', 'entry', 'exit', 'leverage', 'pnl', 'gross', 'fees', 'funding', 'notional', 'margin', 'orderType', 'execType', 'strategy'];
+  const cols = ['time', 'symbol', 'category', 'dir', 'size', 'entry', 'exit', 'leverage', 'pnl', 'gross', 'fees', 'funding', 'notional', 'margin', 'orderType', 'execType', 'strategy', 'tags', 'note'];
   const esc = v => { const s = v === null || v === undefined ? '' : String(v); return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; };
   const lines = [['closed_at', ...cols.slice(1)].join(',')];
-  for (const t of filtered()) lines.push(cols.map(c => esc(c === 'time' ? new Date(t.time).toISOString() : c === 'strategy' ? strategyName(strategyOf(t)) : t[c])).join(','));
+  for (const t of filtered()) lines.push(cols.map(c => esc(c === 'time' ? new Date(t.time).toISOString() : c === 'strategy' ? strategyName(strategyOf(t)) : c === 'tags' ? tagsOf(t).join('; ') : c === 'note' ? (noteOf(t)?.text || '') : t[c])).join(','));
   const a = document.createElement('a');
   a.href = URL.createObjectURL(new Blob([lines.join('\n')], { type: 'text/csv' }));
   a.download = `perp-dojo-trades-${new Date().toISOString().slice(0, 10)}.csv`;
@@ -980,6 +1427,22 @@ $('#csvBtn').onclick = exportCsv;
 $('#exportCsv').onclick = () => { if (!all.length) return alertBox('Pull some data first, then export.'); exportCsv(); };
 
 // ===== PDF review =====
+// Shared by the PDF review and the Reports tab: formatters, rules, journal.
+function reportCtx() {
+  const daily = dailyMap(all);
+  const journalEntries = Object.entries(journalAll()).filter(([, e]) => e.text?.trim())
+    .map(([k, e]) => ({ time: fromInput(k), text: e.text, rating: e.rating, net: daily.get(k)?.net ?? null }))
+    .sort((x, y) => x.time - y.time);
+  const weekly = Object.entries(weeklyAll()).filter(([, w]) => w.text?.trim())
+    .map(([k, w]) => ({ time: fromInput(k), text: w.text })).sort((x, y) => x.time - y.time);
+  return {
+    fmt: { money, compact, date, dateTime },
+    equity: account?.available ? account.equity : null,
+    strategyOf: t => strategyName(strategyOf(t)),
+    checkinDone: checkinDoneOn, journaled: journalHas,
+    uid: status?.key?.uid, journalEntries, weekly,
+  };
+}
 // A written report (public/report.js) built from the trades in the current
 // filters, then printed with the browser's Save as PDF. Nothing is animated.
 let printing = false, titleBefore = '';
@@ -995,19 +1458,15 @@ function preparePrint() {
   const scope = [rangeLabel(), filters.symbol !== 'all' ? filters.symbol : 'All markets',
     filters.strategy !== 'all' ? (filters.strategy === 'none' ? 'Unlabeled trades' : strategyName(filters.strategy)) : null,
     filters.side !== 'all' ? filters.side + 's only' : null].filter(Boolean).join(' · ');
-  const daily = dailyMap(all);
-  const journalEntries = Object.entries(journalAll()).filter(([, e]) => e.text?.trim())
-    .map(([k, e]) => ({ time: fromInput(k), text: e.text, rating: e.rating, net: daily.get(k)?.net ?? null }))
-    .sort((x, y) => x.time - y.time);
-  const weekly = Object.entries(weeklyAll()).filter(([, w]) => w.text?.trim())
-    .map(([k, w]) => ({ time: fromInput(k), text: w.text })).sort((x, y) => x.time - y.time);
+  if (view === 'reports') {
+    const { trades, ctx } = monthReport(rpt.month || thisMonthKey());
+    writeReport(doc, trades, ctx);
+    document.title = `Perp Dojo ${ctx.title}`;
+    return;
+  }
   writeReport(doc, filtered(), {
-    fmt: { money, compact, date, dateTime },
-    equity: account?.available ? account.equity : null,
-    strategyOf: t => strategyName(strategyOf(t)),
-    checkinDone: checkinDoneOn, journaled: journalHas,
-    from, to: to === null ? null : Math.min(to, Date.now()), scope, uid: status?.key?.uid,
-    journalEntries, weekly,
+    ...reportCtx(),
+    from, to: to === null ? null : Math.min(to, Date.now()), scope,
   });
   document.title = `Perp Dojo review ${date(Date.now())}`;
 }
@@ -1020,6 +1479,93 @@ function finishPrint() {
   setCalm(false);
   document.title = titleBefore;
 }
+
+// ===== monthly reports =====
+// The written review for one calendar month. The current month covers the
+// days pulled so far; past months are complete (as far as the pulled data goes).
+const rpt = { month: null };                     // 'YYYY-MM', null = this month
+const monthKeyOf = ms => { const d = new Date(ms); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`; };
+const thisMonthKey = () => monthKeyOf(Date.now());
+const monthStart = key => { const [y, m] = key.split('-').map(Number); return new Date(y, m - 1, 1).getTime(); };
+const monthEnd = key => { const [y, m] = key.split('-').map(Number); return new Date(y, m, 1).getTime() - 1; };
+const shiftMonth = (key, n) => { const [y, m] = key.split('-').map(Number); return monthKeyOf(new Date(y, m - 1 + n, 1).getTime()); };
+const shortDate = ms => new Date(ms).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+const monthName = key => new Date(monthStart(key)).toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
+
+// every month from the first pulled data to now, newest first
+function reportMonths() {
+  const starts = [...all.map(t => t.time), ...coveredSpans.map(s => s[0])];
+  const now = thisMonthKey();
+  if (!starts.length) return [now];
+  const out = [];
+  for (let k = monthKeyOf(Math.min(...starts)); k <= now; k = shiftMonth(k, 1)) out.unshift(k);
+  return out;
+}
+
+function monthReport(key) {
+  const now = Date.now(), from = monthStart(key), end = monthEnd(key);
+  const partial = end >= now;
+  const coverFrom = coveredSpans.length ? Math.min(...coveredSpans.map(s => s[0])) : null;
+  const coverTo = coveredSpans.length ? Math.max(...coveredSpans.map(s => s[1])) : null;
+  const through = partial ? Math.min(now, coverTo ?? now) : end;
+  const inRange = (a, b) => all.filter(t => t.time >= a && t.time <= b);
+  const trades = inRange(from, end);
+  const s = summarize(trades);
+  const days = new Date(end).getDate();
+  const dayNo = Math.max(1, Math.min(days, new Date(through).getDate()));
+  const tradingDays = dailyMap(trades).size;
+
+  let sofar = null, note = null;
+  if (partial) {
+    sofar = `${shortDate(from)} – ${shortDate(through)}, day ${dayNo} of ${days}. ${s.n} closed trade${s.n === 1 ? '' : 's'} on ${tradingDays} trading day${tradingDays === 1 ? '' : 's'}.`
+      + (coverTo !== null && now - coverTo > 6 * 3_600_000 ? ` Data was last pulled ${dateTime(coverTo)}; pull again to bring it up to date.` : ' The report fills in as the month goes on.');
+  } else {
+    const gaps = [];
+    if (coverFrom !== null && coverFrom > from) gaps.push(`starts on ${date(coverFrom)}`);
+    if (coverTo !== null && coverTo < end) gaps.push(`ends on ${date(coverTo)}`);
+    if (gaps.length) note = `Your pulled data ${gaps.join(' and ')}, so this month is incomplete. Pull a wider range to fill it in.`;
+  }
+
+  // last month: the whole of it, or the same stretch while this one is running
+  const pk = shiftMonth(key, -1), pFrom = monthStart(pk);
+  const pTo = partial ? Math.min(monthEnd(pk), new Date(new Date(pFrom).getFullYear(), new Date(pFrom).getMonth(), dayNo + 1).getTime() - 1) : monthEnd(pk);
+  const haveLast = coverFrom === null ? all.some(t => t.time <= pTo) : coverFrom <= pTo;
+  const compare = haveLast ? monthCompare(s, summarize(inRange(pFrom, pTo)), {
+    partial, curName: partial ? 'This month' : monthName(key), prevName: new Date(pFrom).toLocaleDateString(undefined, { month: 'long' }),
+    prevSpan: `${date(pFrom)} – ${date(pTo)}`, f: { money },
+  }) : null;
+
+  return {
+    trades,
+    ctx: {
+      ...reportCtx(),
+      kicker: partial ? 'Monthly report · in progress' : 'Monthly report',
+      title: monthName(key), from, to: through, scope: 'All markets · all strategies',
+      sofar, note, compare, appendix: false,
+    },
+  };
+}
+
+function renderReports() {
+  const months = reportMonths();
+  if (!rpt.month || !months.includes(rpt.month)) rpt.month = months[0];
+  const sel = $('#rpMonth');
+  const opts = months.map(k => `<option value="${k}">${k === thisMonthKey() ? `${monthName(k)} · so far` : monthName(k)}</option>`).join('');
+  if (sel.dataset.opts !== opts) { sel.innerHTML = opts; sel.dataset.opts = opts; }
+  sel.value = rpt.month;
+  $('#rpPrev').disabled = rpt.month === months[months.length - 1];
+  $('#rpNext').disabled = rpt.month === months[0];
+  $('#rpThis').hidden = rpt.month === thisMonthKey();
+  const { trades, ctx } = monthReport(rpt.month);
+  writeReport($('#rpScreen'), trades, ctx);
+}
+const goMonth = k => { rpt.month = k; syncHash(); renderReports(); };
+$('#rpMonth').onchange = e => goMonth(e.target.value);
+$('#rpPrev').onclick = () => goMonth(shiftMonth(rpt.month, -1));
+$('#rpNext').onclick = () => goMonth(shiftMonth(rpt.month, 1));
+$('#rpThis').onclick = () => goMonth(thisMonthKey());
+$('#rpPdf').onclick = () => $('#exportPdf').click();
+
 window.addEventListener('beforeprint', preparePrint);
 window.addEventListener('afterprint', finishPrint);
 $('#exportPdf').onclick = () => {
@@ -1030,6 +1576,84 @@ $('#exportPdf').onclick = () => {
 };
 
 
+
+// ===== notes and tags on trades =====
+// Map of trade id → { tags: [], text, updatedAt }, per Bybit account, in this
+// browser; included in "Save to server" snapshots like strategy labels.
+const notesKey = () => 'notes:' + (status?.key?.uid ?? 'local');
+let notesCache = null, notesDirty = false;
+function notesAll() {
+  if (!notesCache || notesCache.key !== notesKey()) notesCache = { key: notesKey(), data: store.get(notesKey(), {}) };
+  return notesCache.data;
+}
+const noteOf = t => notesAll()[t.id] || null;
+const tagsOf = t => noteOf(t)?.tags || [];
+const hasNote = t => !!noteOf(t)?.text?.trim();
+function setNote(id, patch) {
+  const data = notesAll();
+  const n = { tags: [], text: '', ...data[id], ...patch, updatedAt: Date.now() };
+  if (!n.tags.length && !n.text.trim()) delete data[id]; else data[id] = n;
+  store.set(notesKey(), data);
+  notesDirty = true;
+  markLocalChange();
+}
+// presets first, then your own tags, most used first
+function allTags() {
+  const count = new Map();
+  for (const n of Object.values(notesAll())) for (const tag of n.tags || []) count.set(tag, (count.get(tag) || 0) + 1);
+  const custom = [...count.keys()].filter(t => tagKind(t) === 'custom').sort((a, b) => count.get(b) - count.get(a));
+  return [...TRADE_TAGS.map(x => x.tag), ...custom];
+}
+const tagChip = (tag, extra = '') => el('span', `tag-chip ${tagKind(tag)} ${extra}`.trim(), tag);
+
+// The notes panel inside the replay: tag toggles, your own tags, a free-text note.
+let noteTimer = 0;
+function notesPanel(box, t) {
+  clearTimeout(noteTimer);
+  box.replaceChildren();
+  const head = el('div', 'tn-head');
+  head.append(el('div', 'kicker', 'Notes and tags'), el('span', 'muted small tn-saved', ''));
+  const saved = head.lastChild;
+  const chips = el('div', 'tn-tags');
+  chips.setAttribute('role', 'group'); chips.setAttribute('aria-label', 'Tags');
+  const paint = () => {
+    const mine = new Set(tagsOf(t));
+    chips.replaceChildren(...[...new Set([...allTags(), ...mine])].map(tag => {
+      const b = el('button', `tag-chip ${tagKind(tag)}` + (mine.has(tag) ? ' on' : ''), tag);
+      b.type = 'button'; b.setAttribute('aria-pressed', String(mine.has(tag)));
+      b.onclick = () => {
+        const next = mine.has(tag) ? tagsOf(t).filter(x => x !== tag) : [...tagsOf(t), tag];
+        setNote(t.id, { tags: next }); paint(); flash();
+      };
+      return b;
+    }), add);
+  };
+  const add = el('input', 'tn-add');
+  add.type = 'text'; add.placeholder = '+ your own tag'; add.maxLength = 30; add.setAttribute('aria-label', 'Add your own tag');
+  add.onkeydown = e => {
+    if (e.key !== 'Enter') return;
+    e.preventDefault();
+    const tag = add.value.trim().replace(/\s+/g, ' ');
+    if (!tag) return;
+    const known = allTags().find(x => x.toLowerCase() === tag.toLowerCase()) || tag;
+    if (!tagsOf(t).includes(known)) setNote(t.id, { tags: [...tagsOf(t), known] });
+    add.value = ''; paint(); flash(); add.focus();
+  };
+  const text = el('textarea', 'tn-text');
+  text.rows = 3; text.placeholder = 'Why you took it, what you saw, how you felt, what you would do differently…';
+  text.setAttribute('aria-label', 'Note for this trade');
+  text.value = noteOf(t)?.text || '';
+  const save = () => { clearTimeout(noteTimer); if ((noteOf(t)?.text || '') !== text.value) { setNote(t.id, { text: text.value }); flash(); } };
+  text.oninput = () => { clearTimeout(noteTimer); saved.textContent = ''; noteTimer = setTimeout(save, 500); };
+  text.onblur = save;
+  const flash = () => { saved.textContent = 'Saved'; };
+  paint();
+  box.append(head, chips, text);
+}
+$('#replayDlg').addEventListener('close', () => {
+  document.activeElement?.blur?.();
+  if (notesDirty) { notesDirty = false; render(); }
+});
 
 // ===== strategy labels on trades =====
 // Map of trade id → strategy id, per Bybit account, in this browser; included
@@ -1480,14 +2104,15 @@ function openJournal(key) {
 
 // #journal/2026-10-14 deep-links to a day; #analytics etc. to a view
 function syncHash() {
-  const want = view === 'journal' && jr.day ? `#journal/${jr.day}` : view === 'playbook' && pb.id ? `#playbook/${pb.id}` : view === 'review' && rv.week ? `#review/${dayKey(new Date(rv.week))}` : `#${view}`;
+  const want = view === 'journal' && jr.day ? `#journal/${jr.day}` : view === 'playbook' && pb.id ? `#playbook/${pb.id}` : view === 'review' && rv.week ? `#review/${dayKey(new Date(rv.week))}` : view === 'reports' && rpt.month ? `#reports/${rpt.month}` : `#${view}`;
   if (location.hash !== want) history.replaceState(null, '', want);
 }
 function readHash() {
-  const m = location.hash.match(/^#(dashboard|analytics|journal|review|playbook|wizard|trades)(?:\/([\w-]+))?$/);
+  const m = location.hash.match(/^#(dashboard|analytics|journal|review|reports|playbook|wizard|trades|scanner)(?:\/([\w-]+))?$/);
   if (!m) return false;
   if (m[1] === 'journal' && /^\d{4}-\d{2}-\d{2}$/.test(m[2] || '')) { jr.day = m[2]; const d = keyToDate(m[2]); jr.month = { y: d.getFullYear(), m: d.getMonth() }; }
   if (m[1] === 'playbook' && m[2]) pb.id = m[2];
+  if (m[1] === 'reports' && /^\d{4}-\d{2}$/.test(m[2] || '')) rpt.month = m[2];
   if (m[1] === 'review' && /^\d{4}-\d{2}-\d{2}$/.test(m[2] || '')) rv.week = weekStart(fromInput(m[2]));
   view = m[1];
   return true;

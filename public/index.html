@@ -21,9 +21,11 @@
       <button type="button" data-view="analytics"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2 14V8M6 14V3M10 14V6M14 14V10"/></svg>Analytics</button>
       <button type="button" data-view="journal"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3.5 1.5h7l2 2v11h-9z"/><path d="M5.5 6h5M5.5 8.5h5M5.5 11h3"/></svg>Journal</button>
       <button type="button" data-view="review"><svg viewBox="0 0 16 16" aria-hidden="true"><rect x="1.5" y="2.5" width="13" height="12" rx="2"/><path d="M1.5 6.5h13M5 1v3M11 1v3M4.5 11l2 1.5 4-4"/></svg>Weekly review</button>
+      <button type="button" data-view="reports"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 1.5h5.5L13 5v9.5H4z"/><path d="M9.5 1.5V5H13M6.5 8.5h4M6.5 11h4"/></svg>Reports</button>
       <button type="button" data-view="playbook"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 2.5h4.5a1.5 1.5 0 0 1 1.5 1.5v9.5a1 1 0 0 0-1-1h-5z"/><path d="M13.5 2.5H9A1.5 1.5 0 0 0 7.5 4v9.5a1 1 0 0 1 1-1h5z"/></svg>Playbook</button>
       <button type="button" data-view="wizard"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 4.5 4 6l2.5-3M2.5 10.5 4 12l2.5-3M8.5 4.5h5M8.5 10.5h5"/></svg>Entry wizard</button>
       <button type="button" data-view="trades"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2 3.5h12M2 8h12M2 12.5h12"/></svg>Trades</button>
+      <button type="button" data-view="scanner"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2 11.5h3.5l1.5-6 2 8 1.5-4h3.5"/></svg>SFP scanner<span class="beta-badge">Beta</span></button>
     </nav>
 
     <div class="side-exports">
@@ -131,6 +133,37 @@
           </div>
         </div>
 
+        <div id="recapCard" class="card c12 accented recap-card" style="--a: var(--a2)" hidden>
+          <div class="card-row recap-head">
+            <div class="recap-head-left">
+              <div class="kicker" id="rcKicker">Yesterday's recap</div>
+              <h2 id="rcTitle" class="recap-title"></h2>
+              <span id="rcPeek" class="today-peek muted small"></span>
+            </div>
+            <div class="recap-head-right">
+              <a id="rcJournal" class="more-link" href="#journal">Journal entry</a>
+              <button id="rcCollapse" class="icon-btn today-toggle" type="button" aria-expanded="true" aria-controls="rcBody" title="Collapse"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 10l4-4 4 4"/></svg></button>
+            </div>
+          </div>
+          <div id="rcBody" class="recap-body">
+            <dl id="rcStats" class="recap-stats"></dl>
+            <div class="recap-cols">
+              <div>
+                <div class="kicker">Rules</div>
+                <ul id="rcRules" class="recap-rules"></ul>
+              </div>
+              <div>
+                <div class="kicker">Your notes</div>
+                <div id="rcNotes" class="recap-notes"></div>
+              </div>
+              <div>
+                <div class="kicker">Suggestions for today</div>
+                <ol id="rcTips" class="recap-tips"></ol>
+              </div>
+            </div>
+          </div>
+        </div>
+
         <div id="statsSentinel" class="c12 stats-sentinel" aria-hidden="true"></div>
         <div class="stats c12">
           <div class="card stat net-card hero">
@@ -173,6 +206,19 @@
         </div>
 
         <div id="warnings" class="warnings c12" role="status" aria-live="polite"></div>
+
+        <div id="posCard" class="card c12 accented pos-card" style="--a: var(--a4)">
+          <div class="card-row">
+            <div class="kicker"><span id="posLive" class="live-dot" aria-hidden="true"></span>Open positions <span id="posCount" class="pos-count"></span></div>
+            <div class="pos-head-right">
+              <span id="posTotal" class="pos-total"></span>
+              <span id="posAt" class="muted small"></span>
+              <button id="posEye" class="icon-btn eye-btn" type="button" aria-pressed="true"></button>
+              <button id="posRefresh" class="icon-btn" type="button" aria-label="Refresh open positions" title="Refresh">↻</button>
+            </div>
+          </div>
+          <div id="posList" class="pos-list"></div>
+        </div>
 
         <div class="card c12 cum-card accented" style="--a: var(--a1)">
           <div class="card-row"><div class="kicker">Cumulative P&amp;L</div><div class="muted small">Net of fees and funding, by close time</div></div>
@@ -243,6 +289,27 @@
           <div id="heatmap" class="heatmap"></div>
         </div>
 
+        <div class="card c4 accented dash-timing" style="--a: var(--a1)">
+          <div class="card-row"><div class="kicker">Best time to open</div><a class="more-link" href="#analytics" data-goto="openGrid">Details</a></div>
+          <div id="dOpenValue" class="mid-value"></div>
+          <div id="dOpenSub" class="muted small"></div>
+          <div id="dOpenGrid" class="open-grid mini"></div>
+          <div id="dOpenAvoid" class="muted small avoid"></div>
+        </div>
+        <div class="card c4 accented dash-timing" style="--a: var(--a3)">
+          <div class="card-row"><div class="kicker">Sessions</div><a class="more-link" href="#analytics" data-goto="sessionChart">Details</a></div>
+          <div id="dSesValue" class="mid-value"></div>
+          <div id="dSesSub" class="muted small"></div>
+          <div id="dSesChart" class="chart"></div>
+        </div>
+        <div class="card c4 accented dash-timing" style="--a: var(--a5)">
+          <div class="card-row"><div class="kicker">Best hold time</div><a class="more-link" href="#analytics" data-goto="holdChart">Details</a></div>
+          <div id="dHoldValue" class="mid-value"></div>
+          <div id="dHoldSub" class="muted small"></div>
+          <div id="dHoldChart" class="chart"></div>
+          <div id="dHoldAvg" class="muted small"></div>
+        </div>
+
         <div class="card c6 accented" style="--a: var(--a1)">
           <div class="kicker">Performance</div>
           <dl id="perfList" class="kv"></dl>
@@ -278,15 +345,83 @@
           <h2>Markets</h2>
           <div class="table-wrap"><table id="symbolTable" class="data"></table></div>
         </div>
-        <div class="card c6">
-          <h2>By weekday</h2>
-          <p class="sub">Net P&amp;L by the day a trade closed, in your local time</p>
-          <div id="weekdayChart" class="chart"></div>
+        <div class="card c12">
+          <h2>By tag</h2>
+          <p id="tagSub" class="sub">Results for trades you tagged. Tag a trade from its replay.</p>
+          <div class="table-wrap"><table id="tagTable" class="data compact"></table></div>
+        </div>
+
+        <div class="c12 section-head">
+          <div>
+            <h2>Timing</h2>
+            <p id="timingSub" class="sub"></p>
+          </div>
+          <div class="seg" role="group" aria-label="Count trades by">
+            <button type="button" data-basis="open" aria-pressed="true">When opened</button>
+            <button type="button" data-basis="close" aria-pressed="false">When closed</button>
+          </div>
+        </div>
+        <div class="card c12">
+          <div class="card-row">
+            <div>
+              <h2>Best time to open a trade</h2>
+              <p class="sub">Net P&amp;L by the weekday and hour each position was opened, in your local time</p>
+            </div>
+          </div>
+          <div id="openGrid" class="open-grid"></div>
+          <div class="open-windows">
+            <div><div class="kicker">Best windows to open</div><ol id="bestWindows" class="windows"></ol></div>
+            <div><div class="kicker">Worst windows to open</div><ol id="worstWindows" class="windows"></ol></div>
+          </div>
         </div>
         <div class="card c6">
-          <h2>By hour of day</h2>
-          <p class="sub">Net P&amp;L by the hour a trade closed, in your local time</p>
-          <div id="hourChart" class="chart"></div>
+          <h2>Trading sessions</h2>
+          <p id="sessionSub" class="sub"></p>
+          <div id="sessionChart" class="chart"></div>
+          <div class="table-wrap"><table id="sessionTable" class="data compact"></table></div>
+        </div>
+        <div class="stack c6">
+          <div class="card">
+            <h2>By weekday</h2>
+            <p id="weekdaySub" class="sub"></p>
+            <div id="weekdayChart" class="chart"></div>
+          </div>
+          <div class="card">
+            <h2>By hour of day</h2>
+            <p id="hourSub2" class="sub"></p>
+            <div id="hourChart" class="chart"></div>
+          </div>
+        </div>
+
+        <div class="card c12">
+          <div class="card-row hold-head">
+            <div>
+              <h2>Hold time vs outcome</h2>
+              <p id="holdSub" class="sub"></p>
+            </div>
+            <dl class="hold-stats">
+              <div class="hold-best"><dt>Best average hold time</dt><dd id="holdBest">—</dd><small id="holdBestSub"></small></div>
+              <div><dt>Avg hold, winners</dt><dd id="holdWin">—</dd></div>
+              <div><dt>Avg hold, losers</dt><dd id="holdLoss">—</dd></div>
+            </dl>
+          </div>
+          <div id="holdChart" class="chart"></div>
+          <div class="table-wrap"><table id="holdTable" class="data compact"></table></div>
+        </div>
+
+        <div class="card c12">
+          <h2>Fees and funding</h2>
+          <p class="sub">What trading costs you between the price move and your net P&amp;L</p>
+          <dl id="costStats" class="cost-stats"></dl>
+        </div>
+        <div class="card c6">
+          <h2>Costs by month</h2>
+          <p class="sub">Fees plus funding paid, net of funding received</p>
+          <div id="costMonthChart" class="chart"></div>
+        </div>
+        <div class="card c6">
+          <h2>Costs by market</h2>
+          <div class="table-wrap"><table id="costTable" class="data compact"></table></div>
         </div>
         <div class="card c12">
           <h2>How your trades land</h2>
@@ -492,12 +627,122 @@
         </div>
       </section>
 
+      <!-- ===================== REPORTS ===================== -->
+      <section id="view-reports" class="grid" hidden>
+        <div class="card c12 accented rp-bar" style="--a: var(--a3)">
+          <div class="cal-nav">
+            <button id="rpPrev" class="icon-btn" type="button" aria-label="Previous month">‹</button>
+            <select id="rpMonth" aria-label="Month to report on"></select>
+            <button id="rpNext" class="icon-btn" type="button" aria-label="Next month">›</button>
+            <button id="rpThis" class="btn ghost small-btn" type="button">This month</button>
+          </div>
+          <button id="rpPdf" class="btn" type="button"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 1.5h5.5L13 5v9.5H4z"/><path d="M8.5 7v5M6.5 10l2 2 2-2"/></svg>Save as PDF</button>
+        </div>
+        <div class="c12"><article id="rpScreen" class="rp rp-screen" aria-live="polite"></article></div>
+      </section>
+
       <!-- ===================== TRADES ===================== -->
+      <!-- ===================== SFP SCANNER (beta) ===================== -->
+      <section id="view-scanner" class="grid" hidden>
+        <div class="card c12 accented" style="--a: var(--a2)">
+          <div class="card-row">
+            <div>
+              <h2>4h swing failure backtest</h2>
+              <p class="sub">A swing high's level is the top of its candle body (bottom for a swing low). A signal is a 4h candle that wicks past a level and closes back inside it. Public Bybit candles, no key used. Nothing here trades or sends alerts yet.</p>
+            </div>
+            <button id="sfpRun" class="btn primary" type="button">Run backtest</button>
+          </div>
+          <div class="sfp-settings">
+            <label class="sfp-pairs">Pairs (USDT perps)<textarea id="sfpPairs" rows="2" spellcheck="false"></textarea></label>
+            <label>Backtest period
+              <select id="sfpPeriod"><option value="30">Last 30 days</option><option value="60">Last 60 days</option><option value="90">Last 90 days</option><option value="180">Last 180 days</option></select>
+            </label>
+            <label>Candles after a swing<input id="sfpRight" type="number" min="1" max="20" step="1"></label>
+            <label>Candles before a swing<input id="sfpLeft" type="number" min="0" max="20" step="1"></label>
+            <label>Min candles from swing to test<input id="sfpMinAge" type="number" min="0" max="100" step="1"></label>
+            <label>Level lookback (days)<input id="sfpLookback" type="number" min="1" max="120" step="1"></label>
+            <label>Range measured over (days)<input id="sfpRangeDays" type="number" min="1" max="60" step="1" title="The range a level is placed in: highest high to lowest low over this many days before the signal"></label>
+            <label>Range edge only: outer % of range<input id="sfpEdge" type="number" min="0" max="50" step="5" title="Shorts need their level in the top this-% of the lookback range, longs in the bottom. 0 turns it off."></label>
+            <label class="check"><input id="sfpOutermost" type="checkbox"> Only the outermost level (no live level beyond it)</label>
+            <label class="check"><input id="sfpSmt" type="checkbox"> Counter to BTC's 4h trend: require a 15m SMT against BTC</label>
+            <label>BTC trend: 4h EMA length<input id="sfpEma" type="number" min="5" max="200" step="1" title="BTC is in an uptrend when its 4h close is above this EMA"></label>
+            <label>SMT form
+              <select id="sfpSmtType">
+                <option value="strength">BTC takes its low/high, the pair holds</option>
+                <option value="sweep">The pair takes its low/high, BTC holds</option>
+              </select>
+            </label>
+            <label>SMT reference window
+              <select id="sfpSmtRef" title="The low (or high) each market takes or holds: its extreme over this window before the signal candle">
+                <option value="any">Any of 4h, 8h or 16h</option><option value="16">4h (16 × 15m)</option><option value="32">8h (32 × 15m)</option><option value="64">16h (64 × 15m)</option>
+              </select>
+            </label>
+            <label>BTC neutral zone: % from EMA<input id="sfpBand" type="number" min="0" max="5" step="0.5" title="Within this % of its EMA, BTC counts as neutral, so no signal is counter-trend"></label>
+            <label class="check"><input id="sfpBreak" type="checkbox"> A 4h close beyond a level breaks it</label>
+            <label class="check"><input id="sfpOnce" type="checkbox"> A level can only trigger once</label>
+            <div class="sfp-presets">
+              <span class="muted small">Filtering</span>
+              <div class="seg small" role="group" aria-label="Filter preset">
+                <button type="button" data-sfp-preset="balanced" title="Min age 10, outer 35% of range, BTC neutral within 1% of its EMA, SMT on any of 4h/8h/16h">Balanced</button>
+                <button type="button" data-sfp-preset="strict" title="Min age 12, outer 25% of range, no neutral zone, SMT on 8h">Strict</button>
+              </div>
+              <button id="sfpReset" class="btn ghost small-btn" type="button">Reset to defaults</button>
+            </div>
+          </div>
+          <div id="sfpStatus" class="muted small sfp-status"></div>
+        </div>
+
+        <div id="sfpResults" class="c12 grid sfp-results" hidden>
+          <div class="card c12 accented" style="--a: var(--a5)">
+            <div class="card-row">
+              <div class="kicker">Latest 4h close</div>
+              <div class="muted small" id="sfpNextClose"></div>
+            </div>
+            <div id="sfpLatest" class="sfp-latest"></div>
+          </div>
+          <dl id="sfpSummary" class="c12 sfp-summary"></dl>
+          <div class="card c12">
+            <div class="card-row">
+              <div>
+                <h2>Signals on the chart</h2>
+                <p class="sub">Every signal for one pair on its 4h candles. Down arrows are short signals, up arrows are long signals. Lines are levels, from the swing candle's body until the level broke or expired: solid if it produced a signal, dotted if not. Hover an arrow for details and its 24h result, click it to open the signal.</p>
+              </div>
+              <div class="trades-tools">
+                <select id="sfpChartPair" aria-label="Pair to chart"></select>
+                <label class="check small"><input id="sfpChartLevels" type="checkbox" checked> Levels</label>
+              </div>
+            </div>
+            <div id="sfpChart" class="sfp-chart"></div>
+            <div id="sfpChartNote" class="muted small"></div>
+          </div>
+          <div class="card c12">
+            <h2>By pair</h2>
+            <p class="sub">"In favor" is the move from the signal close in the trade's direction. Click a pair to filter the signals below.</p>
+            <div class="table-wrap"><table id="sfpPairTable" class="data compact"></table></div>
+          </div>
+          <div class="card c12">
+            <div class="card-row">
+              <div><h2>Signals</h2><p id="sfpCount" class="sub"></p></div>
+              <div class="trades-tools">
+                <select id="sfpPairFilter" aria-label="Filter by pair"></select>
+                <select id="sfpSideFilter" aria-label="Filter by side"><option value="all">Longs and shorts</option><option value="Long">Longs</option><option value="Short">Shorts</option></select>
+              </div>
+            </div>
+            <p class="sub">Click a signal to see it on the 4h chart with its levels.</p>
+            <div class="table-wrap"><table id="sfpTable" class="data"></table></div>
+            <button id="sfpMore" class="btn more" type="button" hidden></button>
+          </div>
+        </div>
+      </section>
+
       <section id="view-trades" class="grid" hidden>
         <div class="card c12">
           <div class="card-row">
-            <div><h2>Trades</h2><p id="tradeCount" class="sub"></p></div>
-            <button id="csvBtn" class="btn" type="button">Export CSV</button>
+            <div><h2>Trades</h2><p id="tradeCount" class="sub"></p><p class="sub">Click a trade to replay it and add notes or tags.</p></div>
+            <div class="trades-tools">
+              <select id="tagFilter" class="filter-select" aria-label="Filter by tag"></select>
+              <button id="csvBtn" class="btn" type="button">Export CSV</button>
+            </div>
           </div>
           <div class="table-wrap"><table id="tradeTable" class="data"></table></div>
           <button id="moreBtn" class="btn more" type="button" hidden></button>
@@ -512,6 +757,28 @@
     </div>
   </div>
 </div>
+
+<dialog id="replayDlg" class="dlg wide replay-dlg" aria-labelledby="rpTitle">
+  <div class="dlg-head">
+    <div>
+      <div class="kicker">Trade replay</div>
+      <h2 id="rpTitle"></h2>
+    </div>
+    <button id="rpClose" class="icon-btn" type="button" aria-label="Close">✕</button>
+  </div>
+  <dl id="rpStats" class="replay-stats"></dl>
+  <div class="replay-bar">
+    <div class="seg small" role="group" aria-label="Candle size" id="rpIntervals"></div>
+    <div class="replay-nav">
+      <span id="rpCount" class="muted small"></span>
+      <button id="replayPrev" class="btn small-btn" type="button">‹ Previous trade</button>
+      <button id="replayNext" class="btn small-btn" type="button">Next trade ›</button>
+    </div>
+  </div>
+  <div id="rpChart" class="replay-chart"></div>
+  <p id="rpNote" class="muted small"></p>
+  <section id="rpNotes" class="trade-notes" aria-label="Notes and tags for this trade"></section>
+</dialog>
 
 <!-- the written PDF review, built when you export -->
 <article id="reportDoc" class="rp" hidden></article>

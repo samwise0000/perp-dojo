@@ -54,3 +54,26 @@ test('snapshot: nothing at first, then a gzip round trip; non-gzip is refused', 
   const bad = await call('/api/snapshot', { method: 'POST', headers: { 'content-type': 'application/octet-stream' }, body: '{"not":"gzip"}' });
   assert.equal(bad.status, 400);
 });
+
+test('klines: candles for the replay, oldest first, inputs checked', async () => {
+  const end = Date.now(), start = end - 3_600_000;
+  const r = await call(`/api/klines?category=linear&symbol=BTCUSDT&interval=5&start=${start}&end=${end}`);
+  assert.equal(r.status, 200);
+  const { candles } = await r.json();
+  assert.ok(candles.length > 5);
+  assert.ok(candles.every((c, i) => i === 0 || c.t > candles[i - 1].t));
+  assert.ok(candles.every(c => c.h >= Math.max(c.o, c.c) && c.l <= Math.min(c.o, c.c)));
+  for (const bad of ['category=spot&symbol=BTCUSDT&interval=5', 'category=linear&symbol=btc/usdt&interval=5', 'category=linear&symbol=BTCUSDT&interval=7'])
+    assert.equal((await call(`/api/klines?${bad}&start=${start}&end=${end}`)).status, 400);
+  assert.equal((await fetch(`${BASE}/api/klines?category=linear&symbol=BTCUSDT&interval=5&start=${start}&end=${end}`, { headers: { 'x-perp-key': 'nope' } })).status, 401);
+});
+
+test('positions: open ones only, with stop-loss risk and open time', async () => {
+  const r = await call('/api/positions');
+  const j = await r.json();
+  assert.equal(j.available, true);
+  assert.deepEqual(j.positions.map(p => p.symbol).sort(), ['BTCUSDT', 'SOLUSDT']);
+  const sol = j.positions.find(p => p.symbol === 'SOLUSDT');
+  assert.equal(sol.sl, null);
+  assert.equal(sol.dir, 'Short');
+});

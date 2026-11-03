@@ -92,8 +92,10 @@ function timeTicks(x0, x1, width) {
   for (let i = 0; i <= count; i++) out.push(x0 + (span * i) / count);
   return out;
 }
-const fmtDate = (ms, span) => new Date(ms).toLocaleDateString(undefined,
-  span > 300 * 86_400_000 ? { month: 'short', year: '2-digit' } : { month: 'short', day: 'numeric' });
+// a span of a day or two gets times instead of a row of identical dates
+const fmtDate = (ms, span) => span < 2 * 86_400_000
+  ? new Date(ms).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })
+  : new Date(ms).toLocaleDateString(undefined, span > 300 * 86_400_000 ? { month: 'short', year: '2-digit' } : { month: 'short', day: 'numeric' });
 
 // Monotone cubic (Fritsch–Carlson) through [x, y] screen points.
 function monotonePath(P) {

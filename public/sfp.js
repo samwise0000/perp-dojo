@@ -1,0 +1,192 @@
+// Swing failure patterns (SFP) on 4h candles. Pure functions with no page
+// code, so the same rules can run in the browser (the Beta tab) and later on
+// the server for alerts.
+//
+// The rules, for a short (mirror everything for a long at swing lows):
+//   1. Swing high: a candle whose body top (max of open, close) is above the
+//      body tops of the `right` candles after it and the `left` candles before it.
+//      It's confirmed once those `right` candles have closed.
+//   2. Level: a line at that body top, live for `lookbackDays` after the swing.
+//   3. Sweep: a later candle's wick goes above the line (it needn't pass the
+//      swing candle's own wick).
+//   4. Failure: that candle closes at or below the line. That close is the signal.
+//      Only levels whose swing candle is at least `minAge` candles back can be
+//      tested, so a signal is a test of an established range, not a fresh wiggle.
+//   5. Range filters, against mid-range signals. The range is the highest high
+//      and lowest low over the last `rangeDays` (default: the level lookback),
+//      before the signal candle. With `edge`
+//      (a share, e.g. 0.25) a short's level must sit in the top 25% of that
+//      range and a long's in the bottom 25%; 0 turns it off. With `outermost`,
+//      a short's level must be the highest live swing-high level (no live level
+//      above it), mirrored for longs.
+//   A close beyond the line breaks the level (if `breakOnClose`). With `once`
+//   (the default) a level gives at most one signal, so a level that keeps
+//   failing doesn't count over and over.
+
+export const H4 = 4 * 3_600_000;
+export const SFP_DEFAULTS = { left: 3, right: 3, minAge: 12, lookbackDays: 30, breakOnClose: true, once: true, edge: 0.25, rangeDays: 7, outermost: false };
+
+const top = c => Math.max(c.o, c.c), bottom = c => Math.min(c.o, c.c);
+
+// Only candles that have fully closed: Bybit's latest candle is still forming.
+export const closedOnly = (candles, now = Date.now(), ms = H4) => candles.filter(c => c.t + ms <= now);
+
+// Every swing in the candles, with when it becomes usable. On a perp each
+// candle opens where the last one closed, so the candles either side of a peak
+// share its body-top price. The first candle at that price is the swing: every
+// other candle in the window must be strictly lower, except the one right
+// after it, which may tie (it opened at the swing's close).
+export function swings(candles, { left = 3, right = 3 } = {}) {
+  const out = [];
+  for (let i = left; i + right < candles.length; i++) {
+    const hi = top(candles[i]), lo = bottom(candles[i]);
+    let isHigh = true, isLow = true;
+    for (let j = 1; j <= Math.max(left, right) && (isHigh || isLow); j++) {
+      for (const k of [i - j, i + j]) {
+        if ((k < i && j > left) || (k > i && j > right)) continue;
+        const tieOk = k === i + 1;
+        if (tieOk ? top(candles[k]) > hi : top(candles[k]) >= hi) isHigh = false;
+        if (tieOk ? bottom(candles[k]) < lo : bottom(candles[k]) <= lo) isLow = false;
+      }
+    }
+    if (isHigh) out.push({ kind: 'high', i, price: hi, t: candles[i].t, confirmedAt: i + right });
+    if (isLow) out.push({ kind: 'low', i, price: lo, t: candles[i].t, confirmedAt: i + right });
+  }
+  return out;
+}
+
+// Walk the candles in order, keeping the live levels, and record every SFP.
+// Returns signals (one per candle and side, listing every level it failed at),
+// the levels still live after the last candle, and every level's lifetime
+// (`levels`: from the candle it became usable to the candle it ended on, and why).
+export function detect(candles, opts = {}) {
+  const o = { ...SFP_DEFAULTS, ...opts };
+  const all = swings(candles, o);
+  const life = o.lookbackDays * 86_400_000;
+  let live = [];
+  const signals = [], levels = [];
+  const end = (l, t, why) => levels.push({ kind: l.kind, price: l.price, t: l.t, from: l.from, until: t, why, hits: l.hits });
+  let next = 0;
+  const byConfirm = [...all].sort((a, b) => a.confirmedAt - b.confirmedAt);
+  for (let k = 0; k < candles.length; k++) {
+    const c = candles[k];
+    // levels confirmed by the previous candle's close become usable now
+    while (next < byConfirm.length && byConfirm[next].confirmedAt < k) live.push({ ...byConfirm[next++], hits: 0, from: c.t });
+    live = live.filter(l => (c.t - l.t <= life) || (end(l, candles[k - 1].t, 'expired'), false));
+    // the range over the lookback, up to the candle before this one
+    const back = candles.slice(Math.max(0, k - Math.round((o.rangeDays ? o.rangeDays * 86_400_000 : life) / H4)), k);
+    const rHi = back.length ? Math.max(...back.map(x => x.h)) : null, rLo = back.length ? Math.min(...back.map(x => x.l)) : null;
+    const posIn = price => (rHi > rLo ? (price - rLo) / (rHi - rLo) : null);
+    const topHigh = Math.max(...live.filter(l => l.kind === 'high').map(l => l.price));
+    const bottomLow = Math.min(...live.filter(l => l.kind === 'low').map(l => l.price));
+    const hit = { high: [], low: [] };
+    for (const l of live) {
+      if (k - l.i < o.minAge) continue;            // too young to count as a test
+      const pos = posIn(l.price);
+      if (l.kind === 'high' && c.h > l.price && c.c <= l.price) {
+        if (o.edge && (pos === null || pos < 1 - o.edge)) continue;    // mid-range
+        if (o.outermost && l.price < topHigh) continue;               // a bigger level is still above
+        hit.high.push(l);
+      }
+      if (l.kind === 'low' && c.l < l.price && c.c >= l.price) {
+        if (o.edge && (pos === null || pos > o.edge)) continue;
+        if (o.outermost && l.price > bottomLow) continue;
+        hit.low.push(l);
+      }
+    }
+    for (const [kind, levels] of Object.entries(hit)) {
+      if (!levels.length) continue;
+      const short = kind === 'high';
+      const deepest = short ? Math.min(...levels.map(l => l.price)) : Math.max(...levels.map(l => l.price));
+      const outer = short ? Math.max(...levels.map(l => l.price)) : Math.min(...levels.map(l => l.price));
+      signals.push({
+        side: short ? 'Short' : 'Long', k, t: c.t, close: c.c, high: c.h, low: c.l,
+        // where the outermost failed level sits in the range: 0 bottom, 1 top
+        range: { high: rHi, low: rLo, pos: posIn(outer) },
+        levels: levels.map(l => ({ price: l.price, t: l.t, hits: l.hits })).sort((a, b) => (short ? a.price - b.price : b.price - a.price)),
+        // how far the wick went past the nearest level it failed at
+        sweepPct: short ? (c.h - deepest) / deepest : (deepest - c.l) / deepest,
+        ...outcome(candles, k, short),
+      });
+      for (const l of levels) l.hits++;
+    }
+    live = live.filter(l => {
+      if (o.once && l.hits) return end(l, c.t, 'used'), false;
+      if (o.breakOnClose && (l.kind === 'high' ? c.c > l.price : c.c < l.price)) return end(l, c.t, 'broken'), false;
+      return true;
+    });
+  }
+  for (const l of live) end(l, candles.at(-1).t, 'live');
+  return { signals, live, levels, swings: all };
+}
+
+// What price did next: the move in your favor after 1, 3 and 6 candles, and
+// the best and worst points over those 6 candles (24 hours on 4h).
+function outcome(candles, k, short) {
+  const entry = candles[k].c, after = candles.slice(k + 1, k + 7);
+  const move = p => (short ? entry - p : p - entry) / entry;
+  const at = n => (after.length >= n ? move(after[n - 1].c) : null);
+  return {
+    after4h: at(1), after12h: at(3), after24h: at(6),
+    best24h: after.length ? Math.max(...after.map(c => move(short ? c.l : c.h))) : null,
+    worst24h: after.length ? Math.min(...after.map(c => move(short ? c.h : c.l))) : null,
+  };
+}
+
+// ---- BTC filter: trend on 4h, SMT on 15m ----
+
+export const M15 = 15 * 60_000;
+// smtRef is a number of 15m candles, or 'any': a divergence over 4h, 8h or 16h.
+// neutralBand: BTC within this share of its EMA is neutral, so nothing is counter-trend.
+export const BTC_DEFAULTS = { requireSmt: false, trendEma: 50, smtRef: 'any', smtType: 'strength', neutralBand: 0.01 };
+export const SMT_WINDOWS = [16, 32, 64];
+
+// Exponential moving average of `values` over `n`, seeded with the first value.
+export function ema(values, n) {
+  const k = 2 / (n + 1), out = [];
+  for (let i = 0; i < values.length; i++) out.push(i ? values[i] * k + out[i - 1] * (1 - k) : values[i]);
+  return out;
+}
+
+// BTC's 4h trend at each candle close: up when the close is above its EMA.
+// Returns Map(candle start → { up, close, ema }). The first `n` candles are left
+// out, since the EMA hasn't settled there.
+export function trendMap(btc, n = 50) {
+  const e = ema(btc.map(c => c.c), n), out = new Map();
+  for (let i = n; i < btc.length; i++) out.set(btc[i].t, { up: btc[i].c > e[i], close: btc[i].c, ema: e[i] });
+  return out;
+}
+
+// A signal is counter-trend when it goes against BTC: a long while BTC is down,
+// a short while BTC is up. Within `band` of the EMA, BTC counts as neutral and
+// nothing is counter-trend. null when BTC's trend isn't known for that candle.
+export function counterTrend(sig, trends, band = 0) {
+  const tr = trends.get(sig.t);
+  if (!tr) return null;
+  if (Math.abs(tr.close - tr.ema) / tr.ema < band) return false;
+  return sig.side === 'Long' ? !tr.up : tr.up;
+}
+
+// SMT divergence against BTC on 15m, during the signal's 4h candle. Each market
+// either takes its extreme of the `ref` 15m candles before (lower low for a
+// long, higher high for a short) or holds it. Two forms:
+//   'strength': BTC takes its low while the pair holds (the pair is stronger
+//               than BTC: the usual case for a long against BTC's trend)
+//   'sweep':    the pair takes its low while BTC holds
+// `alt` and `btc` are 15m candles covering the reference window and the signal candle.
+export function smt(sig, alt, btc, { ref = 32, ms = H4, type = 'strength' } = {}) {
+  const from = sig.t - ref * M15, to = sig.t + ms;
+  const part = (cs, a, b) => cs.filter(c => c.t >= a && c.t < b);
+  const side = (cs) => {
+    const before = part(cs, from, sig.t), during = part(cs, sig.t, to);
+    if (!before.length || !during.length) return null;
+    return sig.side === 'Long'
+      ? { ref: Math.min(...before.map(c => c.l)), extreme: Math.min(...during.map(c => c.l)) }
+      : { ref: Math.max(...before.map(c => c.h)), extreme: Math.max(...during.map(c => c.h)) };
+  };
+  const a = side(alt), b = side(btc);
+  if (!a || !b) return { ok: null, alt: a, btc: b };
+  const past = x => (sig.side === 'Long' ? x.extreme < x.ref : x.extreme > x.ref);
+  const ok = type === 'sweep' ? past(a) && !past(b) : past(b) && !past(a);
+  return { ok, type, alt: { ...a, took: past(a) }, btc: { ...b, took: past(b) } };
+}

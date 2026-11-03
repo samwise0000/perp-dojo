@@ -9,6 +9,7 @@ import {
 import { lineChart, columnChart, hbarChart } from './charts.js';
 
 const DAY = 86_400_000;
+const FOOT = 'Each trade is one close as Bybit reports it. Net P&L is after opening and closing fees and funding. Deposits and withdrawals are never counted. The daily-loss check uses current equity as the base for past days, so treat it as approximate.';
 const pad = n => String(n).padStart(2, '0');
 const sum = (arr, f) => arr.reduce((n, x) => n + f(x), 0);
 const pctTxt = v => (v === null || !Number.isFinite(v) ? '—' : `${Math.round(v * 100)}%`);
@@ -68,6 +69,37 @@ export function analyze(trades, {
   };
 }
 
+// This month against last month. When the month is still running, `partial`
+// compares with the same stretch of last month (day 1 to the same day), so a
+// half-finished month isn't measured against a whole one.
+export function monthCompare(cur, prev, { partial = false, curName, prevName, prevSpan = '', f }) {
+  const pf = x => (x.profitFactor === null ? '—' : x.profitFactor === Infinity ? '∞' : x.profitFactor.toFixed(2));
+  const title = partial ? 'Against the same days last month' : `Against ${prevName}`;
+  const lines = [];
+  const when = partial ? `By this point in ${prevName}${prevSpan ? ` (${prevSpan})` : ''}` : `In ${prevName}`;
+  if (!prev.n) lines.push(`${when} you had no closed trades, so there's nothing to compare against yet.`);
+  else {
+    lines.push(`${when} you had closed ${prev.n} trade${prev.n === 1 ? '' : 's'} for ${f.money(prev.net)} with a ${pctTxt(prev.winRate)} win rate.`);
+    if (cur.n) {
+      const d = cur.net - prev.net;
+      const pace = Math.abs(d) < 1 ? 'level with' : d > 0 ? `${f.money(d, { sign: false })} ahead of` : `${f.money(-d, { sign: false })} behind`;
+      lines.push(`${partial ? 'This month you are' : `${curName} finished`} ${pace} ${partial ? 'that pace' : 'it'}${cur.n !== prev.n ? `, on ${cur.n > prev.n ? 'more' : 'fewer'} trades (${cur.n} against ${prev.n})` : ''}.${cur.winRate !== null && prev.winRate !== null && Math.abs(cur.winRate - prev.winRate) >= 0.1 ? ` Your win rate ${cur.winRate > prev.winRate ? 'rose' : 'fell'} from ${pctTxt(prev.winRate)} to ${pctTxt(cur.winRate)}.` : ''}`);
+      if (cur.n > prev.n * 1.5 && cur.net < prev.net) lines.push('More trades for a worse result: check whether the extra ones met your entry criteria.');
+    }
+  }
+  const row = (k, a, b) => [k, a, b];
+  const rows = [
+    row('Net P&L', f.money(cur.net), f.money(prev.net)),
+    row('Trades', String(cur.n), String(prev.n)),
+    row('Win rate', pctTxt(cur.winRate), pctTxt(prev.winRate)),
+    row('Profit factor', pf(cur), pf(prev)),
+    row('Per trade', cur.n ? f.money(cur.expectancy) : '—', prev.n ? f.money(prev.expectancy) : '—'),
+    row('Fees', f.money(-cur.fees), f.money(-prev.fees)),
+    row('Max drawdown', f.money(cur.maxDrawdown), f.money(prev.maxDrawdown)),
+  ];
+  return { title, lines, head: ['', curName, partial ? `${prevName}, same days` : prevName], rows };
+}
+
 // ---------- plain-English conclusions ----------
 export function verdict(a) {
   const { s } = a;
@@ -82,7 +114,7 @@ export function summaryText(a, f) {
   const { s } = a, out = [];
   if (!s.n) return ['There were no closed trades in this period, so there is nothing to review yet.'];
   const mk = a.markets.length;
-  out.push(`Between ${f.date(s.first)} and ${f.date(s.last)} you closed ${s.n} trade${s.n === 1 ? '' : 's'} across ${mk} market${mk === 1 ? '' : 's'} and ${s.net >= 0 ? 'finished up' : 'finished down'} ${f.money(Math.abs(s.net), { sign: false })} after fees and funding.`);
+  out.push(`${f.date(s.first) === f.date(s.last) ? `On ${f.date(s.first)}` : `Between ${f.date(s.first)} and ${f.date(s.last)}`} you closed ${s.n} trade${s.n === 1 ? '' : 's'} across ${mk} market${mk === 1 ? '' : 's'} and ${s.net >= 0 ? 'finished up' : 'finished down'} ${f.money(Math.abs(s.net), { sign: false })} after fees and funding.`);
 
   // the shape of the edge
   const wr = pctTxt(s.winRate), be = a.breakeven;
@@ -291,7 +323,7 @@ export function writeReport(root, trades, ctx) {
   const cover = h('header', 'rp-cover');
   const brand = h('div', 'rp-brand');
   const img = h('img'); img.src = 'logo.png'; img.alt = ''; img.width = 44; img.height = 44;
-  const bt = h('div'); bt.append(h('div', 'rp-kicker', 'Perp Dojo'), h('h1', '', 'Trading review'));
+  const bt = h('div'); bt.append(h('div', 'rp-kicker', ctx.kicker || 'Perp Dojo'), h('h1', '', ctx.title || 'Trading review'));
   brand.append(img, bt);
   const meta = h('div', 'rp-meta');
   meta.append(h('div', '', s.n ? `${f.date(ctx.from ?? s.first)} – ${f.date(ctx.to ?? s.last)}` : 'No trades in range'), h('div', '', ctx.scope), h('div', '', `Generated ${f.dateTime(Date.now())}${ctx.uid ? ` · UID ${ctx.uid}` : ''}`));
@@ -302,11 +334,22 @@ export function writeReport(root, trades, ctx) {
   for (const [k, val, cls] of [['Net P&L', f.money(s.net), s.net >= 0 ? 'pos' : 'neg'], ['Trades', String(s.n), ''], ['Win rate', pctTxt(s.winRate), ''], ['Profit factor', s.profitFactor === null ? '—' : s.profitFactor === Infinity ? '∞' : s.profitFactor.toFixed(2), '']]) {
     const d = h('div', 'rp-bigitem ' + cls); d.append(h('span', '', k), h('b', '', val)); big.append(d);
   }
-  root.append(cover, vbox, big);
+  root.append(cover);
+  // a month still in progress says so up front
+  if (ctx.sofar) { const so = h('div', 'rp-sofar'); so.append(h('b', '', 'So far this month:'), h('span', '', ' ' + ctx.sofar)); root.append(so); }
+  else if (ctx.note) root.append(h('div', 'rp-sofar', ctx.note));
+  root.append(vbox, big);
 
   let n = 1;
   const sum1 = section(root, n++, 'Summary', '--a1');
   paras(sum1, summaryText(a, f));
+
+  // side by side with the previous month (or the same stretch of it)
+  if (ctx.compare) {
+    const cs = section(root, n++, ctx.compare.title, '--a4');
+    paras(cs, ctx.compare.lines);
+    table(cs, ctx.compare.head, ctx.compare.rows);
+  }
   if (!s.n) return;
 
   // key numbers
@@ -392,12 +435,13 @@ export function writeReport(root, trades, ctx) {
     }
   }
 
-  // appendix
+  // appendix (a single month doesn't need one)
+  if (ctx.appendix === false) { root.append(h('p', 'rp-foot', FOOT)); return; }
   const ap = section(root, n++, 'Appendix: month by month', '--a3');
   table(ap, ['Month', 'Trades', 'Win rate', 'Profit factor', 'Fees', 'Net P&L'], a.months.map(m => {
     const [y, mo] = m.key.split('-').map(Number);
     return [new Date(y, mo - 1, 1).toLocaleDateString(undefined, { month: 'long', year: 'numeric' }), String(m.n), pctTxt(m.winRate),
       m.profitFactor === null ? '—' : m.profitFactor === Infinity ? '∞' : m.profitFactor.toFixed(2), f.money(-m.fees), f.money(m.net)];
   }));
-  root.append(h('p', 'rp-foot', 'Each trade is one close as Bybit reports it. Net P&L is after opening and closing fees and funding. Deposits and withdrawals are never counted. The daily-loss check uses current equity as the base for past days, so treat it as approximate.'));
+  root.append(h('p', 'rp-foot', FOOT));
 }

@@ -118,13 +118,17 @@ export function periodPnl(trades, from, to) {
 
 export const WEEKDAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 
-export function byWeekday(trades) {
-  const g = groupStats(trades, t => (new Date(t.time).getDay() + 6) % 7);
+// `at` picks which moment counts: the close (default) or the open. Trades
+// without that moment (an open from before the pulled fills) are left out.
+const timed = (trades, at) => trades.filter(t => Number.isFinite(at(t)));
+
+export function byWeekday(trades, at = t => t.time) {
+  const g = groupStats(timed(trades, at), t => (new Date(at(t)).getDay() + 6) % 7);
   return WEEKDAYS.map((label, i) => ({ label, ...(g.find(x => x.key === i) || { n: 0, net: 0, winRate: null }) }));
 }
 
-export function byHour(trades) {
-  const g = groupStats(trades, t => new Date(t.time).getHours());
+export function byHour(trades, at = t => t.time) {
+  const g = groupStats(timed(trades, at), t => new Date(at(t)).getHours());
   return Array.from({ length: 24 }, (_, h) => ({ label: pad(h), ...(g.find(x => x.key === h) || { n: 0, net: 0, winRate: null }) }));
 }
 
@@ -447,3 +451,239 @@ export function weekReview(trades, start, { equity = null, maxTrades = WARN.maxT
     },
   };
 }
+
+// ---- timing: sessions, open times, hold time ----
+
+// Market sessions in UTC hours, back to back so every trade lands in one.
+// Fixed UTC times: they drift by an hour against London and New York when
+// daylight saving changes, which is fine for this level of detail.
+export const SESSIONS = [
+  { key: 'asia', label: 'Asia', short: 'Asia', from: 0, to: 7 },
+  { key: 'london', label: 'London', short: 'London', from: 7, to: 12 },
+  { key: 'overlap', label: 'London + New York', short: 'LDN + NY', from: 12, to: 16 },
+  { key: 'ny', label: 'New York', short: 'New York', from: 16, to: 21 },
+  { key: 'quiet', label: 'Late / quiet', short: 'Late', from: 21, to: 24 },
+];
+export const sessionOf = ms => { const h = new Date(ms).getUTCHours(); return SESSIONS.find(x => h >= x.from && h < x.to); };
+
+export function bySession(trades, at = t => t.time) {
+  const g = groupStats(timed(trades, at), t => sessionOf(at(t)).key);
+  return SESSIONS.map(x => ({ ...x, ...(g.find(r => r.key === x.key) || { n: 0, net: 0, winRate: null, expectancy: null, profitFactor: null }), key: x.key }));
+}
+
+// Weekday × hour of the open, in local time: where your entries pay.
+export function openGrid(trades) {
+  const cells = Array.from({ length: 7 }, (_, d) => Array.from({ length: 24 }, (_, h) => ({ d, h, n: 0, wins: 0, net: 0 })));
+  for (const t of timed(trades, t => t.openedAt)) {
+    const at = new Date(t.openedAt), c = cells[(at.getDay() + 6) % 7][at.getHours()];
+    c.n++; c.net += t.pnl; if (t.pnl > 0) c.wins++;
+  }
+  for (const row of cells) for (const c of row) { c.winRate = c.n ? c.wins / c.n : null; c.expectancy = c.n ? c.net / c.n : null; }
+  return cells;
+}
+
+// The best and worst opening windows with enough trades to mean something.
+// A window is a weekday plus a 2-hour block, so thin data still adds up.
+export function openWindows(trades, { minTrades = 3 } = {}) {
+  const map = new Map();
+  for (const t of timed(trades, t => t.openedAt)) {
+    const at = new Date(t.openedAt), d = (at.getDay() + 6) % 7, h = at.getHours() - (at.getHours() % 2);
+    const k = d * 24 + h, w = map.get(k) || { d, h, n: 0, wins: 0, net: 0 };
+    w.n++; w.net += t.pnl; if (t.pnl > 0) w.wins++;
+    map.set(k, w);
+  }
+  const ok = [...map.values()].filter(w => w.n >= minTrades).map(w => ({ ...w, winRate: w.wins / w.n, expectancy: w.net / w.n }));
+  return {
+    best: ok.filter(w => w.net > 0).sort((a, b) => b.net - a.net).slice(0, 3),
+    worst: ok.filter(w => w.net < 0).sort((a, b) => a.net - b.net).slice(0, 3),
+  };
+}
+
+export const HOLD_BUCKETS = [
+  { label: '< 1m', max: 60_000 },
+  { label: '1–5m', max: 5 * 60_000 },
+  { label: '5–15m', max: 15 * 60_000 },
+  { label: '15m–1h', max: 3_600_000 },
+  { label: '1–4h', max: 4 * 3_600_000 },
+  { label: '4–12h', max: 12 * 3_600_000 },
+  { label: '12–24h', max: DAY },
+  { label: '1–3d', max: 3 * DAY },
+  { label: '3d +', max: Infinity },
+];
+
+export const holdBucketOf = ms => HOLD_BUCKETS.find(b => ms < b.max);
+
+// Results by how long the position was held, and the hold time that pays best:
+// the bucket with the highest P&L per trade among those with enough trades.
+export function holdOutcome(trades) {
+  const known = trades.filter(t => Number.isFinite(t.duration));
+  const buckets = HOLD_BUCKETS.map((b, i) => {
+    const ts = known.filter(t => t.duration < b.max && t.duration >= (i ? HOLD_BUCKETS[i - 1].max : 0));
+    const wins = ts.filter(t => t.pnl > 0).length, net = sum(ts, t => t.pnl);
+    return { ...b, n: ts.length, wins, net, winRate: ts.length ? wins / ts.length : null, expectancy: ts.length ? net / ts.length : null, avgHold: ts.length ? sum(ts, t => t.duration) / ts.length : null };
+  });
+  const minN = Math.max(3, Math.ceil(known.length * 0.05));
+  const eligible = buckets.filter(b => b.n >= minN);
+  const best = eligible.length ? eligible.reduce((a, b) => (b.expectancy > a.expectancy ? b : a)) : null;
+  const avg = ts => (ts.length ? sum(ts, t => t.duration) / ts.length : null);
+  return {
+    known: known.length, unknown: trades.length - known.length, minN, buckets,
+    best: best && best.expectancy > 0 ? best : null,
+    avgWin: avg(known.filter(t => t.pnl > 0)), avgLoss: avg(known.filter(t => t.pnl < 0)),
+  };
+}
+
+// ---- costs: fees and funding ----
+
+// Where the money goes between price P&L and net P&L. Funding is positive
+// when you paid it; trades where Bybit didn't give a fee split have no funding.
+export function costBreakdown(trades) {
+  const fees = sum(trades, t => t.fees);
+  const withF = trades.filter(t => t.funding !== null && t.funding !== undefined);
+  const fundingPaid = sum(withF.filter(t => t.funding > 0), t => t.funding);
+  const fundingReceived = -sum(withF.filter(t => t.funding < 0), t => t.funding);
+  const gross = sum(trades, t => t.gross), net = sum(trades, t => t.pnl);
+  const grossWin = sum(trades.filter(t => t.gross > 0), t => t.gross);
+  const cost = fees + fundingPaid - fundingReceived;
+  const flippedByCost = trades.filter(t => t.gross > 0 && t.pnl <= 0);
+  const months = new Map();
+  for (const t of trades) {
+    const d = new Date(t.time), k = `${d.getFullYear()}-${pad(d.getMonth() + 1)}`;
+    const m = months.get(k) || { key: k, start: new Date(d.getFullYear(), d.getMonth(), 1).getTime(), fees: 0, funding: 0, gross: 0, net: 0, n: 0 };
+    m.fees += t.fees || 0; m.funding += t.funding || 0; m.gross += t.gross || 0; m.net += t.pnl; m.n++;
+    months.set(k, m);
+  }
+  const markets = groupStats(trades, t => t.symbol).map(g => {
+    const ts = trades.filter(t => t.symbol === g.key);
+    const funding = sum(ts, t => t.funding), gross = sum(ts, t => t.gross);
+    return { key: g.key, n: g.n, fees: g.fees, funding, cost: g.fees + funding, gross, net: g.net, volume: g.volume, feeRate: g.volume ? g.fees / g.volume : null };
+  });
+  return {
+    gross, fees, fundingPaid, fundingReceived, net, cost,
+    costShare: grossWin > 0 ? cost / grossWin : null,
+    feeRate: sum(trades, t => t.notional) ? fees / sum(trades, t => t.notional) : null,
+    flipped: flippedByCost.length, flippedCost: sum(flippedByCost, t => t.gross - t.pnl),
+    perTrade: trades.length ? cost / trades.length : null,
+    months: [...months.values()].sort((a, b) => a.start - b.start),
+    markets,
+  };
+}
+
+// ---- trade tags ----
+
+// Preset tags. `kind` sets the chip color: mistakes in the loss color, good habits in the gain color.
+export const TRADE_TAGS = [
+  { tag: 'Followed plan', kind: 'good' }, { tag: 'A+ setup', kind: 'good' }, { tag: 'Patient entry', kind: 'good' }, { tag: 'Good exit', kind: 'good' },
+  { tag: 'FOMO', kind: 'mistake' }, { tag: 'Revenge', kind: 'mistake' }, { tag: 'Chased entry', kind: 'mistake' }, { tag: 'Oversized', kind: 'mistake' },
+  { tag: 'Moved stop', kind: 'mistake' }, { tag: 'No stop', kind: 'mistake' }, { tag: 'Early exit', kind: 'mistake' }, { tag: 'Held too long', kind: 'mistake' },
+  { tag: 'Broke rules', kind: 'mistake' }, { tag: 'Overtraded', kind: 'mistake' },
+];
+export const tagKind = tag => TRADE_TAGS.find(x => x.tag === tag)?.kind || 'custom';
+
+// One row per tag; a trade with two tags counts in both.
+export function tagStats(trades, tagsOf) {
+  const map = new Map();
+  for (const t of trades) for (const tag of tagsOf(t)) {
+    if (!map.has(tag)) map.set(tag, []);
+    map.get(tag).push(t);
+  }
+  return [...map].map(([tag, ts]) => {
+    const wins = ts.filter(t => t.pnl > 0).length, net = sum(ts, t => t.pnl);
+    return { key: tag, kind: tagKind(tag), n: ts.length, wins, winRate: wins / ts.length, net, expectancy: net / ts.length };
+  }).sort((a, b) => a.net - b.net);
+}
+
+// ---- recap of one trading day ----
+
+// What happened on one day and what to do about it. `history` is every trade
+// (for comparisons with your usual day, sessions and hold times); the day's
+// rules mirror the weekly review's.
+export function dayRecap(history, dayStart, {
+  maxTrades = WARN.maxTradesPerDay, lossPct = WARN.dailyLossPct, equity = null,
+  tagsOf = () => [], noted = () => false, checkinDone = false, journaled = false, fmt = v => String(v), fmtDur = v => String(v),
+} = {}) {
+  const end = new Date(dayStart); end.setDate(end.getDate() + 1);
+  const ts = history.filter(t => t.time >= dayStart && t.time < end.getTime()).sort((a, b) => a.time - b.time);
+  const s = summarize(ts);
+  const sorted = [...ts].sort((a, b) => a.pnl - b.pnl);
+  const best = sorted.length && sorted[sorted.length - 1].pnl > 0 ? sorted[sorted.length - 1] : null;
+  const worst = sorted.length && sorted[0].pnl < 0 ? sorted[0] : null;
+  const costs = sum(ts, t => t.fees + (t.funding || 0));
+
+  // your usual trading day over the 30 days before
+  const before = history.filter(t => t.time < dayStart && t.time >= dayStart - 30 * DAY);
+  const days = dailyMap(before);
+  const avgDay = days.size ? sum([...days.values()], d => d.net) / days.size : null;
+  const avgTrades = days.size ? before.length / days.size : null;
+
+  // rules
+  const extra = ts.slice(maxTrades);
+  const closes = [...history].sort((a, b) => a.time - b.time);
+  const revenge = ts.filter(t => Number.isFinite(t.openedAt) && closes.some(c => c.pnl < 0 && c !== t && c.time <= t.openedAt && t.openedAt - c.time <= WARN.revengeMinutes * 60_000));
+  const base = equity ? equity : null;                                  // approximate: today's equity as the base
+  const limit = base ? (base * lossPct) / 100 : null;
+  const saturday = new Date(dayStart).getDay() === 6;
+  const rules = [
+    { key: 'trades', label: `At most ${maxTrades} trades`, ok: ts.length <= maxTrades, detail: ts.length <= maxTrades ? `${ts.length} taken` : `${ts.length} taken; the extra ${extra.length} netted ${fmt(sum(extra, t => t.pnl))}` },
+    { key: 'loss', label: `Daily loss under ${lossPct}%`, ok: limit === null ? null : s.net > -limit, detail: limit === null ? 'Needs your account balance' : s.net > -limit ? `${fmt(s.net)} against a ${fmt(-limit)} limit` : `${fmt(s.net)}, past the ${fmt(-limit)} limit` },
+    { key: 'revenge', label: `No trade within ${WARN.revengeMinutes} min of a loss`, ok: !revenge.length, detail: revenge.length ? `${revenge.length} re-entr${revenge.length === 1 ? 'y' : 'ies'}, net ${fmt(sum(revenge, t => t.pnl))}` : 'None' },
+    ...(saturday ? [{ key: 'saturday', label: 'No Saturday trading', ok: !ts.length, detail: `${ts.length} trade${ts.length === 1 ? '' : 's'} on a Saturday` }] : []),
+    { key: 'checkin', label: 'Checked in', ok: !!checkinDone, detail: checkinDone ? 'Done' : 'Not done' },
+    { key: 'journal', label: 'Journaled', ok: !!journaled, detail: journaled ? 'Done' : 'No entry for the day' },
+  ];
+
+  // tags used that day
+  const tagged = tagStats(ts, tagsOf);
+  const mistakes = tagged.filter(x => x.kind === 'mistake');
+  const untagged = ts.filter(t => !tagsOf(t).length && !noted(t));
+
+  // where these trades sit against your history
+  const sessions = bySession(history, t => t.openedAt).filter(x => x.n >= 5);
+  const worstSes = sessions.length ? sessions.reduce((a, b) => (b.net < a.net ? b : a)) : null;
+  const inWorstSes = worstSes && worstSes.net < 0 ? ts.filter(t => Number.isFinite(t.openedAt) && sessionOf(t.openedAt).key === worstSes.key) : [];
+  const hold = holdOutcome(history);
+  const winHold = ts.filter(t => t.pnl > 0 && Number.isFinite(t.duration)), lossHold = ts.filter(t => t.pnl < 0 && Number.isFinite(t.duration));
+  const avg = a => (a.length ? sum(a, t => t.duration) / a.length : null);
+
+  // suggestions, most important first, at most four
+  const tips = [];
+  const tip = (rank, text) => tips.push({ rank, text });
+  if (limit !== null && s.net <= -limit) tip(100, `You hit your ${lossPct}% daily loss limit. Trade smaller today, and stop at the first sign of the same pattern.`);
+  if (extra.length) tip(90, `You took ${ts.length} trades against your limit of ${maxTrades}. The extra ${extra.length === 1 ? 'one' : extra.length} netted ${fmt(sum(extra, t => t.pnl))}. Stop after trade ${maxTrades} today.`);
+  if (revenge.length) tip(88, `${revenge.length} trade${revenge.length === 1 ? ' was' : 's were'} opened within ${WARN.revengeMinutes} minutes of a loss (${fmt(sum(revenge, t => t.pnl))}). After a loss today, step away for ${WARN.revengeMinutes} minutes first.`);
+  for (const m of mistakes.slice(0, 2)) tip(80, `You tagged ${m.n} trade${m.n === 1 ? '' : 's'} "${m.key}" (${fmt(m.net)}). ${TAG_ADVICE[m.key] || 'Write down what you will do differently next time.'}`);
+  const wh = avg(winHold), lh = avg(lossHold);
+  if (wh && lh && lh > 2 * wh && lossHold.length >= 1) tip(70, `Your losers were held ${fmtDur(lh)} on average against ${fmtDur(wh)} for winners. Cut losing trades sooner.`);
+  if (inWorstSes.length) tip(60, `${inWorstSes.length} of these trades opened in ${worstSes.label}, your weakest session (${fmt(worstSes.net)} overall). Be pickier then.`);
+  // costs against what the winning moves made before costs
+  const priceWins = sum(ts.filter(t => t.gross > 0), t => t.gross);
+  if (priceWins > 0 && costs / priceWins > 0.3) tip(55, `Fees and funding took ${Math.round((costs / priceWins) * 100)}% of what your winning moves made. Fewer trades with bigger targets, or limit orders, would keep more.`);
+  const timedTs = ts.filter(t => Number.isFinite(t.duration));
+  if (hold.best && timedTs.length && timedTs.every(t => holdBucketOf(t.duration).label !== hold.best.label))
+    tip(40, `None of these trades were held ${hold.best.label}, your best-paying hold time (${fmt(hold.best.expectancy)} per trade).`);
+  if (untagged.length) tip(30, `${untagged.length} trade${untagged.length === 1 ? ' has' : 's have'} no tags or notes. Tag ${untagged.length === 1 ? 'it' : 'them'} while you remember why you took ${untagged.length === 1 ? 'it' : 'them'}.`);
+  if (!journaled) tip(25, 'Write a few lines about the day in your journal: what you saw, what you felt, what you would repeat.');
+  if (!tips.some(t => t.rank >= 55) && s.net > 0) tip(20, 'You kept to your rules and finished green. Same process today: same size, same limits.');
+  else if (!tips.some(t => t.rank >= 55) && ts.length) tip(20, 'A red day inside your rules is part of the job. Keep the same size and process today.');
+  tips.sort((a, b) => b.rank - a.rank);
+
+  return {
+    dayStart, trades: ts, s, best, worst, costs, avgDay, avgTrades,
+    avgHoldWin: wh, avgHoldLoss: lh,
+    rules, tagged, mistakes, untagged,
+    suggestions: tips.slice(0, 4).map(t => t.text),
+  };
+}
+
+const TAG_ADVICE = {
+  'FOMO': 'Only enter on a setup you planned before the move started.',
+  'Revenge': 'After a loss, wait before the next entry.',
+  'Chased entry': 'Set the entry price in advance and let a missed trade go.',
+  'Oversized': 'Size from your stop: risk a fixed share of the account per trade.',
+  'Moved stop': 'Set the stop when you enter and leave it, or only move it toward profit.',
+  'No stop': 'Place a stop-loss with every entry.',
+  'Early exit': 'Let the trade reach your target or stop. Decide the exit before entering.',
+  'Held too long': 'Exit when the reason for the trade is gone, not when it hurts.',
+  'Broke rules': 'Reread your rules before the first trade today.',
+  'Overtraded': `Stop after your daily trade limit.`,
+};

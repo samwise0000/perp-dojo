@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { analyze, verdict, summaryText, recommendations, rulesText, workingText, keyNumbers } from '../public/report.js';
+import { analyze, verdict, summaryText, recommendations, rulesText, workingText, keyNumbers, monthCompare } from '../public/report.js';
+import { summarize } from '../public/metrics.js';
 
 const f = {
   money: (v, o = {}) => (v < 0 ? '−' : o.sign === false ? '' : v > 0 ? '+' : '') + '$' + Math.abs(v).toFixed(2),
@@ -53,4 +54,25 @@ test('small samples are flagged; an empty period still produces a report', () =>
   const empty = analyze([]);
   assert.equal(verdict(empty).level, 'none');
   assert.equal(recommendations(empty, f).length, 1);
+});
+
+test('month in progress: compared with the same days of last month', () => {
+  const cur = summarize([T(0, 50), T(1, -20), T(2, 30)]), prev = summarize([T(-30, 10), T(-29, -40)]);
+  const c = monthCompare(cur, prev, { partial: true, curName: 'This month', prevName: 'October', prevSpan: 'Oct 1 – Oct 3', f });
+  assert.equal(c.title, 'Against the same days last month');
+  assert.deepEqual(c.head, ['', 'This month', 'October, same days']);
+  const text = c.lines.join(' ');
+  assert.match(text, /By this point in October \(Oct 1 – Oct 3\) you had closed 2 trades for −\$30\.00/);
+  assert.match(text, /This month you are \$90\.00 ahead of that pace, on more trades \(3 against 2\)/);
+  assert.deepEqual(c.rows[0], ['Net P&L', '+$60.00', '−$30.00']);
+});
+
+test('past month: compared with the whole previous month, empty months handled', () => {
+  const c = monthCompare(summarize([T(0, -10)]), summarize([]), { curName: 'October 2026', prevName: 'September', f });
+  assert.equal(c.title, 'Against September');
+  assert.match(c.lines[0], /In September you had no closed trades/);
+  assert.deepEqual(c.rows[1], ['Trades', '1', '0']);
+  const d = monthCompare(summarize([T(0, -10), T(1, -10), T(2, -10), T(3, 5)]), summarize([T(-30, 20), T(-29, 20)]), { curName: 'October 2026', prevName: 'September', f });
+  assert.match(d.lines.join(' '), /October 2026 finished \$65\.00 behind it/);
+  assert.match(d.lines.join(' '), /More trades for a worse result/);
 });

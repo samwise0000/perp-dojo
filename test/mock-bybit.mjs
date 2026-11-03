@@ -90,6 +90,23 @@ export function startMock({ port = 9999, writable = false, trades = makeTrades()
       res.end(JSON.stringify({ retCode, retMsg, result: body, retExtInfo: {}, time: Date.now() }));
     };
     if (url.pathname === '/v5/market/time') return send({ timeSecond: String(Math.floor(Date.now() / 1000)) }, 0, 'OK');
+    // public candles, like Bybit's: a random walk around the nearest trade's entry, newest first
+    if (url.pathname === '/v5/market/kline') {
+      const p = Object.fromEntries(url.searchParams);
+      const ms = { D: DAY, W: 7 * DAY }[p.interval] || Number(p.interval) * 60_000;
+      if (!ms || !p.symbol) return send({}, 10001, 'params error');
+      const near = trades.filter(t => t.symbol === p.symbol).sort((a, b) => Math.abs(a.updatedTime - p.start) - Math.abs(b.updatedTime - p.start))[0];
+      if (!near) return send({ symbol: p.symbol, category: p.category, list: [] });
+      const rand = rng(Number(p.start) % 100000 + 1);
+      const out = [];
+      let px = Number(near.avgEntryPrice);
+      for (let t = Math.floor(Number(p.start) / ms) * ms; t <= Number(p.end) && out.length < Math.min(Number(p.limit) || 200, 1000); t += ms) {
+        const o = px, c = o * (1 + (rand() - 0.5) * 0.006), h = Math.max(o, c) * (1 + rand() * 0.002), l = Math.min(o, c) * (1 - rand() * 0.002);
+        out.push([String(t), String(o), String(h), String(l), String(c), '1', '1']);
+        px = c;
+      }
+      return send({ symbol: p.symbol, category: p.category, list: out.reverse() });
+    }
     // auth, exactly as Bybit checks it
     const ts = req.headers['x-bapi-timestamp'], recv = req.headers['x-bapi-recv-window'];
     const qs = url.search.slice(1);
@@ -101,6 +118,19 @@ export function startMock({ port = 9999, writable = false, trades = makeTrades()
       return send({ apiKey: MOCK_KEY, readOnly: writable ? 0 : 1, userID: 123456, uta: 1, ips: [], expiredAt: '', deadlineDay: 83, permissions: {} });
     if (url.pathname === '/v5/account/wallet-balance')
       return send({ list: [{ accountType: 'UNIFIED', totalEquity: '26037.81', totalWalletBalance: '25980.10', totalPerpUPL: '57.71', coin: [] }] });
+    if (url.pathname === '/v5/position/list') {
+      const p = Object.fromEntries(url.searchParams);
+      if (p.category === 'linear' && !p.symbol && !p.settleCoin) return send({}, 10001, 'symbol or settleCoin is required');
+      const now = Date.now();
+      const list = p.category === 'linear' && p.settleCoin === 'USDT' ? [
+        { symbol: 'BTCUSDT', side: 'Buy', size: '0.05', avgPrice: '76000', markPrice: '76400', positionValue: '3800', unrealisedPnl: '20', leverage: '10',
+          liqPrice: '69100', stopLoss: '75200', takeProfit: '78400', trailingStop: '0', curRealisedPnl: '-1.2', positionIdx: 0, updatedTime: String(now - 60_000) },
+        { symbol: 'SOLUSDT', side: 'Sell', size: '30', avgPrice: '150', markPrice: '154.5', positionValue: '4500', unrealisedPnl: '-135', leverage: '25',
+          liqPrice: '155.9', stopLoss: '', takeProfit: '', trailingStop: '0', curRealisedPnl: '-2', positionIdx: 0, updatedTime: String(now - 30_000) },
+        { symbol: 'ETHUSDT', side: '', size: '0', avgPrice: '0', markPrice: '3000', positionValue: '', unrealisedPnl: '', leverage: '10', liqPrice: '', stopLoss: '', takeProfit: '', positionIdx: 0 },
+      ] : [];
+      return send({ category: p.category, list, nextPageCursor: '' });
+    }
     if (url.pathname === '/v5/execution/list') {
       const p = Object.fromEntries(url.searchParams);
       const start = Number(p.startTime), end = Number(p.endTime);
