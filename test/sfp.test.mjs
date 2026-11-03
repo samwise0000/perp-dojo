@@ -204,3 +204,14 @@ test('trade: target hit is a win of rr, stop hit is −1R, both in one candle co
   assert.equal(lost.R, -1);
   assert.equal(tradeOf([...tradeBase, [108, 112, 91, 95]]).result, 'loss');
 });
+
+test('the scaling plan: adds at +1R and +2R, stops stepped up behind them', async () => {
+  const { scalePlan, BE_FEES } = await import('../public/sfp.js');
+  const short = scalePlan({ entry: 100, sl: 102, tp: 80 }, 'Short');
+  assert.deepEqual(short.adds.map(a => [a.price, a.size]), [[98, 1], [96, 0.5]]);
+  assert.equal(short.adds[0].stop, 100);
+  assert.ok(Math.abs(short.adds[1].stop - (100 - 0.8 * 2) * (1 - BE_FEES)) < 1e-9);  // average entry 98.4
+  assert.equal(short.R, 10 + 9 + 0.5 * 8);
+  assert.equal(scalePlan({ entry: 100, sl: 99, tp: 101.5 }, 'Long').adds.length, 1); // the target comes before +2R
+  assert.equal(scalePlan(null, 'Long'), null);
+});

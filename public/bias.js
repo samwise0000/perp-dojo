@@ -67,3 +67,32 @@ export function nySessions(candles, { hours = NY_HOURS.session, now = Date.now()
 
 // Today's bias: the most recent finished NY session.
 export const currentBias = sessions => sessions.find(s => !s.live && !s.missing) || null;
+
+// Every finished weekday NY session from `from` to `to`, oldest first, read from
+// candles of `ms` (e.g. 1h): { start, end, bias }. For grading signals over months.
+export function sessionList(candles, { from, to = Date.now(), hours = NY_HOURS.session, ms = 3_600_000, tz = NY_TZ } = {}) {
+  const [oh, om] = hours.open.split(':').map(Number), [ch, cm] = hours.close.split(':').map(Number);
+  const at = new Map(candles.map(c => [c.t, c]));
+  const out = [];
+  for (let d = from - 86_400_000; d <= to + 86_400_000; d += 86_400_000) {
+    const [y, m, dd] = zonedDate(d, tz);
+    const wd = new Date(Date.UTC(y, m - 1, dd)).getUTCDay();
+    if (wd === 0 || wd === 6) continue;
+    const start = zonedToUtc(y, m, dd, oh, om, tz), end = zonedToUtc(y, m, dd, ch, cm, tz);
+    if (out.length && out.at(-1).start === start) continue;
+    const o = at.get(start), c = at.get(end - ms);
+    if (!o || !c) continue;
+    out.push({ start, end, bias: c.c > o.o ? 'bullish' : c.c < o.o ? 'bearish' : 'flat' });
+  }
+  return out;
+}
+// The bias in force at `t` (the last session finished by then) and whether a session is running.
+export function nyBiasAt(sessions, t, hours = NY_HOURS.session, tz = NY_TZ) {
+  let bias = null;
+  for (const s of sessions) { if (s.end <= t) bias = s.bias; else break; }
+  const [y, m, d] = zonedDate(t, tz);
+  const [oh, om] = hours.open.split(':').map(Number), [ch, cm] = hours.close.split(':').map(Number);
+  const wd = new Date(Date.UTC(y, m - 1, d)).getUTCDay();
+  const during = wd !== 0 && wd !== 6 && t >= zonedToUtc(y, m, d, oh, om, tz) && t < zonedToUtc(y, m, d, ch, cm, tz);
+  return { bias, during };
+}

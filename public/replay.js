@@ -127,7 +127,7 @@ async function show() {
     return b;
   }));
 
-  const stats = t.view ? t.view.stats : t.open ? [
+  const stats = t.view ? (t.view.stats || []) : t.open ? [
     ['Unrealized P&L', t.hidePnl ? '$******' : f.money(t.pnl), t.hidePnl ? '' : t.pnl > 0 ? 'pos' : t.pnl < 0 ? 'neg' : ''],
     ['Entry → mark', `${f.price(t.entry)} → ${f.price(t.exit)}`],
     ['Opened', Number.isFinite(t.openedAt) ? f.dateTime(t.openedAt) : 'Over 7 days ago'],
@@ -150,6 +150,10 @@ async function show() {
     d.append(dt, dd); return d;
   }));
   fill([]);
+  // a signal's trade guide replaces the stat cards
+  const guide = $('#rpGuide');
+  dl.hidden = Boolean(t.view?.guide); guide.hidden = !t.view?.guide;
+  if (t.view?.guide) renderGuide(guide, t.view.guide);
 
   const box = $('#rpChart'), note = $('#rpNote');
   note.textContent = 'Loading candles from Bybit…';
@@ -319,4 +323,15 @@ const SIDE = { gap: 2, width: 10, tail: 10 };
 export function decimals(cs) {
   const p = cs[cs.length - 1].c;
   return p >= 1000 ? 1 : p >= 10 ? 2 : p >= 1 ? 4 : Math.min(8, 2 + Math.ceil(-Math.log10(p)) + 2);
+}
+
+// Steps as a numbered list; **text** is bold. Then what happened, and a line of context.
+function renderGuide(root, { steps, outcome, context }) {
+  const rich = text => text.split('**').map((part, i) => { if (!(i % 2)) return document.createTextNode(part); const b = document.createElement('b'); b.textContent = part; return b; });
+  const ol = document.createElement('ol');
+  for (const st of steps) { const li = document.createElement('li'); li.append(...rich(st)); ol.append(li); }
+  const out = [ol];
+  if (outcome) { const p = document.createElement('p'); p.className = 'rg-outcome ' + outcome.cls; p.append(...rich(outcome.text)); out.push(p); }
+  if (context) { const p = document.createElement('p'); p.className = 'rg-context muted small'; p.textContent = context; out.push(p); }
+  root.replaceChildren(...out);
 }

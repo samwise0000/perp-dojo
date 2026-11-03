@@ -201,7 +201,7 @@
 
         <div id="sigCard" class="card c6 accented sig-card" style="--a: var(--a3)">
           <div class="card-row">
-            <div class="kicker">Latest signals <button class="info" type="button" data-info="4h swing failure signals on your 51-pair watchlist, with the same rules and filters as the Telegram alerts (Balanced). The latest three, with BTC's 4h trend at the time and the move 24 hours later (or so far, if younger). Click one to see it on the chart, or open Signals for all of them.">i</button></div>
+            <div class="kicker">Latest signals <button class="info" type="button" data-info="4h swing failure signals on your 54-pair watchlist, with the same rules and filters as the Telegram alerts (Balanced). The latest three, with BTC's 4h trend at the time and the move 24 hours later (or so far, if younger). Click one to see it on the chart, or open Signals for all of them.">i</button></div>
             <div class="sig-head-right"><a class="more-link" href="#signals">All signals</a></div>
           </div>
           <div id="sigLatest" class="sig-grid"></div>
@@ -666,7 +666,7 @@
           <div class="card-row">
             <div>
               <h2>Every swing failure signal</h2>
-              <p class="sub">4h swing failures on your 51-pair watchlist, with the same rules and filters as the Telegram alerts (the scanner's Balanced preset). Closed 4h candles only. Each is scored as a trade: entry at the signal candle's close, stop at its wick, target at the opposing swing level the move started from, whichever is hit first (a candle that touches both counts as the stop). Results are in R, before and after Bybit's standard fees. Click a row to see the trade on the chart.</p>
+              <p class="sub">4h swing failures on your 54-pair watchlist, with the same rules and filters as the Telegram alerts (the scanner's Balanced preset). Closed 4h candles only. Each is scored as a trade: entry at the signal candle's close, stop at its wick, target at the opposing swing level the move started from, whichever is hit first (a candle that touches both counts as the stop). Results are in R, before and after Bybit's standard fees. Click a row to see the trade on the chart.</p>
             </div>
             <div class="sig-head-right">
               <select id="sigPeriod" aria-label="Period"><option value="90">Last 90 days</option><option value="180">Last 180 days</option><option value="365">Last year</option></select>
@@ -688,6 +688,7 @@
             <div class="sig-filters">
               <select id="sigPair" aria-label="Pair"></select>
               <select id="sigSide" aria-label="Side"><option value="all">Longs and shorts</option><option value="Long">Longs</option><option value="Short">Shorts</option></select>
+              <div id="sigGradeF" class="grade-checks" role="group" aria-label="Grades"></div>
               <select id="sigTrendF" aria-label="BTC trend"><option value="all">Any BTC trend</option><option value="aligned">Aligned with BTC</option><option value="counter">Countertrend</option><option value="neutral">BTC neutral</option></select>
             </div>
           </div>
@@ -738,8 +739,8 @@
             <div class="sfp-presets">
               <span class="muted small">Filtering</span>
               <div class="seg small" role="group" aria-label="Filter preset">
-                <button type="button" data-sfp-preset="balanced" title="Min age 10, sweep at least 0.2%, outer 35% of range, BTC neutral within 1% of its EMA, SMT on any of 4h/8h/16h">Balanced</button>
-                <button type="button" data-sfp-preset="strict" title="Min age 12, sweep at least 0.2%, outer 25% of range, no neutral zone, SMT on 8h">Strict</button>
+                <button type="button" data-sfp-preset="balanced" title="Min age 10, sweep at least 0.1%, outer 35% of range, BTC neutral within 1% of its EMA, SMT on any of 4h/8h/16h">Balanced</button>
+                <button type="button" data-sfp-preset="strict" title="Min age 12, sweep at least 0.1%, outer 25% of range, no neutral zone, SMT on 8h">Strict</button>
               </div>
               <button id="sfpReset" class="btn ghost small-btn" type="button">Reset to defaults</button>
             </div>
@@ -836,6 +837,7 @@
     <button id="rpClose" class="icon-btn" type="button" aria-label="Close">✕</button>
   </div>
   <dl id="rpStats" class="replay-stats"></dl>
+  <section id="rpGuide" class="replay-guide" aria-label="Trade guide" hidden></section>
   <div class="replay-bar">
     <div class="seg small" role="group" aria-label="Candle size" id="rpIntervals"></div>
     <div class="replay-nav">

@@ -903,7 +903,12 @@ async function refreshBias(force = false) {
   } catch (e) { bias = { sym, hours, at: now, error: e.message }; }
   finally { biasBusy = false; }
   if (view === 'dashboard') renderBias();
+  // re-read right after a running session closes, so the pill flips at 5 PM ET rather than up to a minute later
+  clearTimeout(biasFlip);
+  const live = bias?.sessions?.[0];
+  if (live?.live) biasFlip = setTimeout(() => refreshBias(true), Math.max(1000, live.end - Date.now() + 5000));
 }
+let biasFlip = null;
 setInterval(() => { if (view === 'dashboard' && !document.hidden) refreshBias(); }, BIAS_EVERY);
 document.addEventListener('visibilitychange', () => { if (!document.hidden && view === 'dashboard') refreshBias(); });
 
@@ -920,16 +925,23 @@ function renderBias() {
     live.replaceChildren(); hist.replaceChildren();
     return;
   }
+  // while today's NY session runs, the bias is pending until it closes
+  const now = bias.sessions[0], running = Boolean(now?.live);
   const cur = currentBias(bias.sessions);
-  badge.className = 'bias-badge ' + (cur ? biasCls(cur.bias) : 'mid');
-  badge.textContent = cur ? `${biasMark(cur.bias)} ${cur.bias[0].toUpperCase() + cur.bias.slice(1)}` : '—';
-  detail.textContent = cur
-    ? `${new Date(cur.start).toLocaleDateString(undefined, { timeZone: NY_TZ, weekday: 'short' })} ${signedPct(cur.change)}`
-    : 'No finished NY session in the last week.';
-  detail.title = cur ? `${bias.sym} NY session ${biasDay(cur)}: open ${price(cur.open)} at ${nyTime(cur.start)} ET → close ${price(cur.close)} at ${nyTime(cur.end)} ET · high ${price(cur.high)}, low ${price(cur.low)}` : '';
+  if (running) {
+    badge.className = 'bias-badge pending'; badge.replaceChildren(el('span', 'bias-spin', ''), document.createTextNode('Pending'));
+    detail.textContent = `until ${nyTime(now.end)} ET`;
+    detail.title = `Today's NY session is still open; its close at ${nyTime(now.end)} ET sets the bias.` + (cur ? ` Last close: ${biasDay(cur)} ${cur.bias} ${signedPct(cur.change)}.` : '');
+  } else {
+    badge.className = 'bias-badge ' + (cur ? biasCls(cur.bias) : 'mid');
+    badge.textContent = cur ? `${biasMark(cur.bias)} ${cur.bias[0].toUpperCase() + cur.bias.slice(1)}` : '—';
+    detail.textContent = cur
+      ? `${new Date(cur.start).toLocaleDateString(undefined, { timeZone: NY_TZ, weekday: 'short' })} ${signedPct(cur.change)}`
+      : 'No finished NY session in the last week.';
+    detail.title = cur ? `${bias.sym} NY session ${biasDay(cur)}: open ${price(cur.open)} at ${nyTime(cur.start)} ET → close ${price(cur.close)} at ${nyTime(cur.end)} ET · high ${price(cur.high)}, low ${price(cur.low)}` : '';
+  }
 
   // today's session while it runs
-  const now = bias.sessions[0];
   live.replaceChildren();
   if (now?.live) {
     live.append(el('span', 'live-dot', ''));
@@ -940,7 +952,7 @@ function renderBias() {
   // the last few finished sessions, oldest first
   const done = bias.sessions.filter(s => !s.live && !s.missing).slice(0, 5).reverse();
   hist.replaceChildren(...done.map((s, i) => {
-    const latest = i === done.length - 1;
+    const latest = !running && i === done.length - 1;
     const d = el('i', 'bias-dot ' + biasCls(s.bias) + (latest ? ' current' : ''), biasMark(s.bias));
     d.title = `${biasDay(s)}: ${s.bias} ${signedPct(s.change)}${latest ? ' · sets the current bias' : ''}`;
     return d;

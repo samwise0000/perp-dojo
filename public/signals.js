@@ -2,7 +2,9 @@
 // rules and filters as the Telegram alerts (sfp.js ALERT_SETTINGS), so the
 // site and the bot always agree. The Signals tab lists them all; the dashboard
 // shows the latest 24. Candles come from the scanner's IndexedDB cache.
-import { detect, H4, ALERT_SETTINGS, DEFAULT_PAIRS, trendMap, btcSide } from './sfp.js';
+import { detect, H4, ALERT_SETTINGS, DEFAULT_PAIRS, trendMap, btcSide, gradeSetup } from './sfp.js';
+import { sessionList, nyBiasAt } from './bias.js';
+import { idbGet, idbSet } from './db.js';
 import { candlesFor, pool, showOnChart, bindScanner } from './scanner.js';
 
 const DAY = 86_400_000;
@@ -19,8 +21,9 @@ let held = null;                           // { days, candle, p }
 // subscribe while they wait, so the tab can show it even if the dashboard started it.
 const progress = { pairs: new Map(), stage: 'idle', subs: new Set() };
 const notify = () => progress.subs.forEach(f => f());
+let ctx_ = null;
 export function loadSignals(ctx, days) {
-  bindScanner(ctx);
+  bindScanner(ctx); ctx_ = ctx;
   const candle = Math.floor(Date.now() / H4);
   if (held && held.candle === candle && held.days >= days) return held.p.then(r => ({ ...r, signals: r.signals.filter(s => s.t >= Date.now() - days * DAY) }));
   const p = compute(days);
@@ -51,15 +54,47 @@ async function compute(days) {
   progress.stage = 'btc'; notify();
   const btc = await candlesFor('BTCUSDT', start - 20 * DAY);
   const trends = trendMap(btc, o.trendEma);
+  // for the grade: BTC's own SFPs (same rules) and the NY session bias from BTC's 1h candles
+  const btcSfp = new Set(detect(btc, o).signals.map(s => `${s.t}:${s.side}`));
+  let sessions = null;
+  try { sessions = sessionList(await hourly('BTCUSDT', since - 7 * DAY), { from: since - 7 * DAY }); } catch {}
   const signals = per.flat().map(s => {
     const trend = btcSide(s, trends, o.neutralBand);
-    return { ...s, trend, counter: trend === 'counter', btc: trends.get(s.t - H4) || null };
+    const ny = sessions ? nyBiasAt(sessions, s.t + H4) : null;
+    const grade = sessions ? gradeSetup(s.side, { ny, swept: btcSfp.has(`${s.t}:${s.side}`) }) : null;
+    return { ...s, trend, counter: trend === 'counter', btc: trends.get(s.t - H4) || null, ny, grade };
   }).sort((a, b) => b.t - a.t || a.symbol.localeCompare(b.symbol));
   progress.stage = 'done'; notify();
   return { signals, errors, at: Date.now(), days };
 }
 
+// 1h candles from `start`, cached like the 4h ones (closed candles only)
+const H1 = 3_600_000;
+async function hourly(symbol, start) {
+  const key = `sfp1h:linear:${symbol}`;
+  let have = (await idbGet(key).catch(() => null)) || [];
+  if (have.length && have[0].t > start) have = [];
+  const fresh = [];
+  for (let s = have.length ? have.at(-1).t + H1 : Math.floor(start / H1) * H1; s < Date.now(); s += 1000 * H1) {
+    const qs = new URLSearchParams({ category: 'linear', symbol, interval: '60', start: s, end: Math.min(Date.now(), s + 1000 * H1 - 1) });
+    fresh.push(...(await ctx_.apiJson('/api/klines?' + qs)).candles);
+  }
+  const all = [...new Map([...have, ...fresh].map(c => [c.t, c])).values()].sort((a, b) => a.t - b.t).filter(c => c.t + H1 <= Date.now());
+  idbSet(key, all).catch(() => {});
+  return all;
+}
+
 // ---- shared bits ----
+// A+ gets a gold star; the others a small letter
+const GRADES = ['A+', 'A', 'B', 'C'];
+const gradeKey = g => 'g-' + (g === 'A+' ? 'aplus' : g.toLowerCase());
+const gradeLabel = g => (g === 'A+' ? '★ A+' : g);
+const gradeChip = s => {
+  if (!s.grade) return null;
+  const g = s.grade.grade, chip = el('span', 'sig-grade ' + gradeKey(g), gradeLabel(g));
+  chip.title = `Grade ${g}: ${s.grade.why}`;
+  return chip;
+};
 const pctS = v => (v === null || v === undefined || !Number.isFinite(v) ? '—' : (v > 0 ? '+' : v < 0 ? '−' : '') + Math.abs(v * 100).toFixed(2) + '%');
 const cls = v => (v > 0 ? 'pos' : v < 0 ? 'neg' : '');
 const coin = s => s.replace(/USDT$/, '');
@@ -100,15 +135,15 @@ export async function renderSignalsWidget(ctx) {
   
   if (!list.length) { box.replaceChildren(el('p', 'muted small', 'No signals in the last 2 weeks.')); return; }
   box.replaceChildren(...list.map((s, i) => {
-    const b = el('button', 'sig-tile sig-in'); b.style.setProperty('--i', i); b.type = 'button'; b.title = 'Open on the 4h chart';
+    const b = el('button', 'sig-tile sig-in' + (s.grade ? ' tile-' + gradeKey(s.grade.grade) : '')); b.style.setProperty('--i', i); b.type = 'button'; b.title = 'Open on the 4h chart';
     const short = s.side === 'Short';
     const res = result(s);
     // ▲ ONDO long        +1.33%
     // Nov 3, 08:00 PM · 2h ago
     // [Countertrend]      so far
     const top = el('div', 'sig-top');
-    top.append(el('b', short ? 'neg' : 'pos', `${short ? '▼' : '▲'} ${coin(s.symbol)}`), el('span', 'muted', short ? 'short' : 'long'),
-      el('span', 'sig-res ' + cls(res.v), res.v === null ? '' : rText(res.v)));
+    top.append(...[el('b', short ? 'neg' : 'pos', `${short ? '▼' : '▲'} ${coin(s.symbol)}`), el('span', 'muted', short ? 'short' : 'long'), gradeChip(s),
+      el('span', 'sig-res ' + cls(res.v), res.v === null ? '' : rText(res.v))].filter(Boolean));
     const mid = el('div', 'sig-mid');
     mid.append(el('span', 'muted small', `${closeTime(s.t)} · ${ago(s.t)}`));
     const bot = el('div', 'sig-bot');
@@ -120,7 +155,11 @@ export async function renderSignalsWidget(ctx) {
 }
 
 // ---- Signals tab ----
-const tab = { days: 365, pair: 'all', side: 'all', trend: 'all', shown: 100, wired: false, data: null, busy: false };
+const tab = { days: 365, pair: 'all', side: 'all', trend: 'all', grades: new Set(GRADES), shown: 100, wired: false, data: null, busy: false };
+const GRADE_KEY = 'perp-dojo:signal-grades';
+try { const g = JSON.parse(localStorage.getItem(GRADE_KEY) || 'null'); if (Array.isArray(g)) tab.grades = new Set(g.filter(x => GRADES.includes(x))); } catch {}
+// a signal without a grade (the NY bias couldn't be read) shows only when every grade is ticked
+const gradeOk = s => (s.grade ? tab.grades.has(s.grade.grade) : tab.grades.size === GRADES.length);
 
 export function renderSignalsView(ctx) {
   bindScanner(ctx);
@@ -131,6 +170,17 @@ export function renderSignalsView(ctx) {
     $('#sigRefresh').onclick = () => { held = null; load(ctx); };
     for (const [id, k] of [['#sigPair', 'pair'], ['#sigSide', 'side'], ['#sigTrendF', 'trend']])
       $(id).onchange = e => { tab[k] = e.target.value; tab.shown = 100; paint(); };
+    $('#sigGradeF').replaceChildren(...GRADES.map(g => {
+      const lab = el('label', 'grade-check'), box = el('input'); box.type = 'checkbox'; box.value = g; box.checked = tab.grades.has(g);
+      box.onchange = () => {
+        box.checked ? tab.grades.add(g) : tab.grades.delete(g);
+        try { localStorage.setItem(GRADE_KEY, JSON.stringify([...tab.grades])); } catch {}
+        tab.shown = 100; paint();
+      };
+      lab.append(box, el('span', 'sig-grade ' + gradeKey(g), gradeLabel(g)));
+      lab.title = { 'A+': 'With the NY bias, outside the NY session, and BTC swept the same way', A: 'With the NY bias outside the session (or with a BTC sweep during it)', B: 'With the NY bias, but during the NY session', C: 'Against the NY bias' }[g];
+      return lab;
+    }));
     const pf = $('#sigPair');
     pf.replaceChildren(el('option', '', 'All pairs'), ...PAIRS.map(p => { const o = el('option', '', coin(p)); o.value = p; return o; }));
     pf.firstChild.value = 'all';
@@ -179,7 +229,8 @@ function stats(list) {
 
 function paint() {
   const all = tab.data.signals;
-  const list = all.filter(s => (tab.pair === 'all' || s.symbol === tab.pair) && (tab.side === 'all' || s.side === tab.side) && (tab.trend === 'all' || s.trend === tab.trend));
+  const base = all.filter(s => (tab.pair === 'all' || s.symbol === tab.pair) && (tab.side === 'all' || s.side === tab.side) && (tab.trend === 'all' || s.trend === tab.trend));
+  const list = base.filter(gradeOk);
 
   // summary: everything shown, then split by BTC trend
   // each card: average R per trade after fees, then the count, win rate and the figure before fees
@@ -191,7 +242,10 @@ function paint() {
     return d;
   };
   const perDay = list.length ? list.length / tab.days : 0;
+  // one card per grade (within the other filters), then the shown list split by trend and side
+  const gradeCard = g => { const d = card(`Grade ${g}`, stats(base.filter(s => s.grade?.grade === g))); d.classList.add('grade-card', gradeKey(g)); d.classList.toggle('off', !tab.grades.has(g)); return d; };
   $('#sigSummary').replaceChildren(
+    ...GRADES.map(gradeCard),
     card('Signals', stats(list)),
     card('Aligned with BTC', stats(list.filter(s => s.trend === 'aligned'))),
     card('Countertrend', stats(list.filter(s => s.trend === 'counter'))),
@@ -203,16 +257,17 @@ function paint() {
 
   const t = $('#sigTable'); t.replaceChildren();
   const head = el('tr');
-  for (const [h, num] of [['4h close', 0], ['Pair', 0], ['Side', 0], ['Level', 0], ['Entry', 1], ['Stop', 1], ['Target', 1], ['R:R', 1], ['BTC trend', 0], ['Result', 1], ['After fees', 1]]) head.append(el('th', num ? 'num' : '', h));
+  for (const [h, num] of [['4h close', 0], ['Pair', 0], ['Side', 0], ['Grade', 0], ['Level', 0], ['Entry', 1], ['Stop', 1], ['Target', 1], ['R:R', 1], ['BTC trend', 0], ['Result', 1], ['After fees', 1]]) head.append(el('th', num ? 'num' : '', h));
   const thead = el('thead'); thead.append(head);
   const body = el('tbody');
   for (const s of list.slice(0, tab.shown)) {
     const tr = el('tr', 'replayable'); tr.tabIndex = 0; tr.title = 'Show on the 4h chart';
     const tc = el('td'); tc.append(trendChip(s));
+    const gc = el('td'); const chip = gradeChip(s); if (chip) gc.append(chip); else gc.textContent = '—';
     const t = s.trade, f = tab.ctx.fmt.price;
     const res = !t ? '—' : t.result === 'win' ? `✓ ${rText(t.R)}` : t.result === 'loss' ? '✗ −1R' : t.R === 0 ? 'new' : `open ${rText(t.R)}`;
     tr.append(
-      el('td', '', closeTime(s.t)), el('td', '', coin(s.symbol)), el('td', 'side-' + s.side.toLowerCase(), s.side),
+      el('td', '', closeTime(s.t)), el('td', '', coin(s.symbol)), el('td', 'side-' + s.side.toLowerCase(), s.side), gc,
       el('td', '', s.levels.map(l => f(l.price)).join(', ')),
       el('td', 'num', f(s.close)), el('td', 'num', t ? f(t.sl) : '—'), el('td', 'num', t ? f(t.tp) : '—'),
       el('td', 'num', t ? t.rr.toFixed(1) : '—'), tc,

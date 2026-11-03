@@ -24,17 +24,19 @@
 //   failing doesn't count over and over.
 
 export const H4 = 4 * 3_600_000;
-export const SFP_DEFAULTS = { left: 3, right: 3, minAge: 12, lookbackDays: 30, breakOnClose: true, once: true, edge: 0.25, rangeDays: 7, outermost: false, minSweep: 0 };
+export const SFP_DEFAULTS = { left: 3, right: 3, minAge: 12, lookbackDays: 90, breakOnClose: true, once: true, edge: 0.25, rangeDays: 7, outermost: false, minSweep: 0 };
 // Your Bybit watchlist (USDT perps; Bybit lists BONK and PEPE as 1000BONK and 1000PEPE).
 export const DEFAULT_PAIRS = 'ETH SOL 1000BONK WIF 1000PEPE FARTCOIN USELESS BRETT CASHCAT TRUMP PONS DOGE STRK JUP PENDLE UNI ALGO WLD AAVE AERO ZK VVV HYPE MNT ARB ' +
-  'ZETA PUMPFUN LINK NEAR ETHFI ZEC TAO SUI BARD LIT AVAX MEGA OPG SLX XMR ZRO ENA ADA AKE XRP XPL LINEA ONDO GWEI SKR 0G';
+  'ZETA PUMPFUN LINK NEAR ETHFI ZEC TAO SUI BARD LIT AVAX MEGA OPG SLX XMR ZRO ENA ADA AKE XRP XPL LINEA ONDO GWEI SKR 0G BNB RUNE TRX';
+// Added to the default after people had saved lists; saved lists get them too.
+export const ADDED_PAIRS = ['BNB', 'RUNE', 'TRX'];
 // The first list, kept so saved scanner settings still on it move to the new one.
 export const OLD_DEFAULT_PAIRS = 'VVV HYPE STRK AAVE AERO JUP UNI ALGO LINK NEAR ETHFI ZEC SUI LIT AVAX WLD ONDO PENDLE ENA ZK MNT';
 // Presets for how hard to filter. Balanced is the scanner's default (it tested
 // best over 90 days) and what the alerts use.
 export const PRESETS = {
-  balanced: { minAge: 10, edge: 0.35, neutralBand: 0.01, smtRef: 'any', minSweep: 0.002 },
-  strict: { minAge: 12, edge: 0.25, neutralBand: 0, smtRef: 32, minSweep: 0.002 },
+  balanced: { minAge: 10, edge: 0.35, neutralBand: 0.01, smtRef: 'any', minSweep: 0.001 },
+  strict: { minAge: 12, edge: 0.25, neutralBand: 0, smtRef: 32, minSweep: 0.001 },
 };
 
 const top = c => Math.max(c.o, c.c), bottom = c => Math.min(c.o, c.c);
@@ -139,7 +141,8 @@ export function detect(candles, opts = {}) {
 //   target the opposing level: the lowest swing-low body between the swept
 //          swing (the oldest one, if several) and the signal candle, i.e. where
 //          the move into the sweep started. Only swings confirmed by the signal's
-//          close count, so the target is known at entry.
+//          close count, so the target is known at entry. If none is confirmed
+//          yet (a fresh pullback), the lowest candle body in that span instead.
 // Then it walks the later candles: the stop or the target, whichever is hit
 // first. A candle that touches both counts as the stop (we can't see inside it).
 // null when there's no opposing level beyond the entry.
@@ -149,7 +152,14 @@ export function tradePlan(candles, k, short, levels, swingList) {
   if (!risk) return null;
   const from = Math.min(...levels.map(l => l.i));
   const opp = swingList.filter(s => s.kind === (short ? 'low' : 'high') && s.i > from && s.i < k && s.confirmedAt <= k);
-  if (!opp.length) return null;
+  // no confirmed swing yet (the pullback is too fresh): the move's extreme body instead
+  if (!opp.length) {
+    for (let j = from + 1; j < k; j++) {
+      const b = candles[j], body = short ? Math.min(b.o, b.c) : Math.max(b.o, b.c);
+      opp.push({ price: body, t: b.t });
+    }
+    if (!opp.length) return null;
+  }
   const target = opp.reduce((a, b) => (short ? (b.price < a.price ? b : a) : (b.price > a.price ? b : a)));
   const tp = target.price;
   if (short ? tp >= entry : tp <= entry) return null;
@@ -275,4 +285,49 @@ export function smt(sig, alt, btc, { ref = 32, ms = H4, type = 'strength' } = {}
   const past = x => (sig.side === 'Long' ? x.extreme < x.ref : x.extreme > x.ref);
   const ok = type === 'sweep' ? past(a) && !past(b) : past(b) && !past(a);
   return { ok, type, alt: { ...a, took: past(a) }, btc: { ...b, took: past(b) } };
+}
+
+// A letter grade for a setup, from what held up in the 1-year backtest
+// (54 pairs, wick stop, opposing-level target, fees; avg R per trade):
+//   A+  with yesterday's NY bias, outside the NY session, BTC swept the same way   +1.04R
+//   A   with the bias outside the session, or with it + BTC sweep in the session   +0.41R
+//   B   with the bias but during the NY session (the bias may be going stale)       +0.02R
+//   C   against the bias, or no bias known                                         −0.13R
+// ny: { bias: 'bullish'|'bearish'|'flat'|null, during: bool }; swept: BTC's own SFP, same side, same candle.
+export function gradeSetup(side, { ny, swept = false } = {}) {
+  const dir = side === 'Short' ? 'bearish' : 'bullish';
+  const mark = ny?.bias === 'bullish' ? '▲' : ny?.bias === 'bearish' ? '▼' : '';
+  if (!ny?.bias || ny.bias === 'flat') return { grade: 'C', why: 'no NY bias to go with' };
+  if (ny.bias !== dir) return { grade: 'C', why: `against the NY bias ${mark}` };
+  const sw = swept ? ', BTC swept too' : '';
+  if (!ny.during) return { grade: swept ? 'A+' : 'A', why: `with the NY bias ${mark}${sw}` };
+  if (swept) return { grade: 'A', why: `with the NY bias ${mark}${sw}, NY session open` };
+  return { grade: 'B', why: `with the NY bias ${mark}, but the NY session is open` };
+}
+export const GRADE_ORDER = ['A+', 'A', 'B', 'C'];
+
+// The scaling plan for a trade, as backtested on A and A+ setups:
+//   add 1 at +1R (same size as the entry); all stops → the entry
+//   add 2 at +2R (half size, so it also risks 1R to the entry); all stops → the
+//     whole position's break-even (its average entry, plus ~0.15% for fees)
+//   all out at the target
+// Adds the target would be reached before are left out. Sizes are in units of
+// the first entry's size; `R` is what the full plan makes at the target, in
+// units of the first entry's risk.
+export const BE_FEES = 0.0015;
+export function scalePlan(trade, side) {
+  if (!trade) return null;
+  const dir = side === 'Short' ? -1 : 1, risk = Math.abs(trade.entry - trade.sl);
+  const legs = [{ step: 'Entry', price: trade.entry, size: 1 }];
+  const adds = [];
+  for (const n of [1, 2]) {
+    const price = trade.entry + dir * n * risk;
+    if (dir * (trade.tp - price) <= 0) break;                        // the target comes first
+    const size = 1 / n;                                              // its own 1R to the entry
+    legs.push({ step: `Add ${n}`, price, size });
+    const stop = n === 1 ? trade.entry : (legs.reduce((a, l) => a + l.size * l.price, 0) / legs.reduce((a, l) => a + l.size, 0)) * (1 + dir * BE_FEES);
+    adds.push({ n, at: n, price, size, stop, stopLabel: n === 1 ? 'entry' : 'break-even' });
+  }
+  const R = legs.reduce((a, l) => a + l.size * dir * (trade.tp - l.price), 0) / risk;
+  return { risk, adds, R, size: legs.reduce((a, l) => a + l.size, 0) };
 }

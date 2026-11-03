@@ -1,7 +1,7 @@
 // SFP scanner (beta): backtests the 4h swing failure rules in sfp.js across a
 // list of pairs, from Bybit's public candles. Candles are kept in IndexedDB,
 // so a re-run only fetches what has closed since.
-import { detect, closedOnly, H4, SFP_DEFAULTS, BTC_DEFAULTS, SMT_WINDOWS, M15, trendMap, counterTrend, smt, DEFAULT_PAIRS, OLD_DEFAULT_PAIRS, PRESETS, signalsIf, holdLine } from './sfp.js';
+import { scalePlan, detect, closedOnly, H4, SFP_DEFAULTS, BTC_DEFAULTS, SMT_WINDOWS, M15, trendMap, counterTrend, smt, DEFAULT_PAIRS, OLD_DEFAULT_PAIRS, ADDED_PAIRS, PRESETS, signalsIf, holdLine } from './sfp.js';
 import { idbGet, idbSet } from './db.js';
 import { loadLib, css, local, entryColor, decimals } from './replay.js';
 
@@ -15,13 +15,20 @@ const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls)
 // saves get the new rule (v2: one signal per level, no SMT requirement;
 // v3: the full watchlist, if the pairs were still the first default list;
 // v4: a 0.2% minimum sweep, so a wick that barely touches a level doesn't use it up).
-const VERSION = 4;
+const VERSION = 7;
 const load = () => {
   let saved = {};
   try { saved = JSON.parse(localStorage.getItem(KEY) || '{}'); } catch {}
   if ((saved.v || 1) < 2) { saved.once = true; saved.requireSmt = false; }
   if ((saved.v || 1) < 3 && (!saved.pairs || saved.pairs.trim() === OLD_DEFAULT_PAIRS)) saved.pairs = DEFAULT_PAIRS;
   if ((saved.v || 1) < 4) saved.minSweep = PRESETS.balanced.minSweep;
+  if ((saved.v || 1) < 5 && (saved.lookbackDays ?? 30) === 30) saved.lookbackDays = DEFAULTS.lookbackDays;   // 30 → 90 days, so older levels count
+  if ((saved.v || 1) < 6 && saved.minSweep === 0.002) saved.minSweep = PRESETS.balanced.minSweep;   // 0.2% → 0.1%: a tiny wick still counts
+  if ((saved.v || 1) < 7 && saved.pairs) {
+    const have = new Set(saved.pairs.toUpperCase().split(/[\s,$]+/).map(x => x.replace(/USDT$/, '')));
+    const add = ADDED_PAIRS.filter(x => !have.has(x));
+    if (add.length) saved.pairs = saved.pairs.trim() + ' ' + add.join(' ');
+  }
   const s = { ...DEFAULTS, ...saved, v: VERSION };
   save(s);
   return s;
@@ -407,13 +414,31 @@ export function chartItem(s) {
   const firstSwing = Math.min(...s.levels.map(l => l.t), tr ? tr.tpT : Infinity);
   // the chart runs to where the trade ended (or now, if it's still open)
   const end = tr ? (tr.exitT ?? Math.floor(Date.now() / H4) * H4) : s.t;
-  const tradeStats = !tr ? [['Trade', 'No opposing level beyond the entry, so no target']] : [
-    ['Entry', `${p(tr.entry)} at the 4h close`],
-    ['Stop-loss', `${p(tr.sl)} at the wick · ${(tr.riskPct * 100).toFixed(2)}% away`, 'neg'],
-    ['Take-profit', `${p(tr.tp)} at the opposing level · ${tr.rr.toFixed(2)}R`, 'pos'],
-    ['Result', tr.result === 'win' ? `Target hit · ${rText(tr.R)}` : tr.result === 'loss' ? 'Stopped out · −1R' : `Open · ${rText(tr.R)} at the last close`, tr.result === 'win' ? 'pos' : tr.result === 'loss' ? 'neg' : ''],
-    ...(tr.exitT ? [['Closed', `${when(tr.exitT - H4)} · ${Math.round((tr.exitT - s.t) / H4)} candles in`]] : []),
-  ];
+  const plan = scalePlan(tr, s.side);                          // adds at +1R and +2R, stops stepped up behind them
+  // the break-even stop to the entry's precision (rounded toward the safe side)
+  if (plan?.adds[1]) { const dec = (p(tr.entry).replace(/,/g, '').split('.')[1] || '').length, k = 10 ** dec; plan.adds[1].stop = (short ? Math.floor : Math.ceil)(plan.adds[1].stop * k) / k; }
+  // the trade guide above the chart: plain-English steps, prices in **bold**
+  const coin = s.symbol.replace(/USDT$/, ''), buy = short ? 'Short' : 'Buy', beyond = short ? 'above' : 'below', toward = short ? 'down' : 'up';
+  const lv = s.levels.map(l => `**${p(l.price)}**`).join(', ');
+  const steps = [`The 4h candle that closed ${when(s.t)} wicked ${short ? 'above' : 'below'} ${s.levels.length > 1 ? 'the levels' : 'the level'} ${lv} and closed back ${short ? 'below' : 'above'}: a failed ${short ? 'breakout' : 'breakdown'}.`];
+  if (tr) {
+    steps.push(`${buy} ${coin} at the close: **${p(tr.entry)}**.`);
+    steps.push(`Put your stop just ${beyond} the wick at **${p(tr.sl)}**, ${(tr.riskPct * 100).toFixed(2)}% away. That distance is 1R, your risk.`);
+    for (const a of plan?.adds || []) steps.push(a.n === 1
+      ? `If price gets to **${p(a.price)}** (+1R), add the same size again and move all stops ${toward} to your entry, **${p(a.stop)}**.`
+      : `If price gets to **${p(a.price)}** (+2R), add half your entry size and move all stops to break-even for the whole position, **${p(a.stop)}**.`);
+    steps.push(`Take everything off at **${p(tr.tp)}**, the opposing level the move started from: ${tr.rr.toFixed(1)}R on the first entry${plan?.adds.length ? `, ${rText(plan.R)} with the adds` : ''}.`);
+  } else steps.push('No trade: there’s no opposing level beyond the entry to aim for.');
+  const outcome = !tr ? null : tr.result === 'win' ? { text: `Target hit after ${Math.round((tr.exitT - s.t) / H4)} candles: ${rText(tr.R)} on the first entry.`, cls: 'pos' }
+    : tr.result === 'loss' ? { text: `Stopped out after ${Math.round((tr.exitT - s.t) / H4)} candles: −1R.`, cls: 'neg' }
+    : { text: `Still open: ${rText(tr.R)} at the last close.`, cls: '' };
+  const context = [
+    s.grade ? `Grade ${s.grade.grade}: ${s.grade.why}` : null,
+    s.btc ? `BTC 4h trend ${s.btc.up ? 'up' : 'down'}, so this is ${s.counter ? 'against' : 'with'} it` : null,
+    s.counter && s.smt?.alt ? `15m SMT vs BTC: ${smtText(s)}` : null,
+    s.range?.high ? `level at ${rangeText(s)} of the 7-day range` : null,
+    s.after24h !== null && s.after24h !== undefined ? `${pctS(s.after24h)} after 24h` : null,
+  ].filter(Boolean).join(' · ');
   return {
     symbol: s.symbol, category: 'linear', dir: s.side, entry: s.close, exit: s.close, size: 0, leverage: 1, pnl: 0, fees: 0, funding: 0,
     openedAt: firstSwing, time: end + H4, duration: end + H4 - firstSwing,
@@ -421,15 +446,7 @@ export function chartItem(s) {
       interval: '240',
       trimTo: tr ? end + 2 * H4 : undefined,                    // a couple of candles after the trade ends
       title: `${s.symbol} · SFP ${s.side.toLowerCase()} · ${when(s.t)}`,
-      stats: [
-        ['Signal', `${s.side} at the 4h close`, short ? 'neg' : 'pos'],
-        ...tradeStats,
-        ['Levels failed at', s.levels.map(l => p(l.price)).join(', ')],
-        ['BTC 4h trend', s.btc ? `${s.btc.up ? 'Up' : 'Down'}: close ${p(s.btc.close)} vs EMA ${p(s.btc.ema)} · ${s.counter ? 'counter-trend' : 'with the trend'}` : '—', s.counter ? 'neg' : ''],
-        ...(s.counter && s.smt?.alt ? [['15m SMT vs BTC', smtText(s), s.smt.ok ? 'pos' : 'neg']] : []),
-        ['Level in the range', s.range?.high ? `${rangeText(s)} · ${p(s.range.low)} – ${p(s.range.high)}` : '—'],
-        ['After 24h', pctS(s.after24h), cls(s.after24h)],
-      ],
+      guide: { steps, outcome, context },
       lines: [
         ...s.levels.map(l => ({ price: l.price, color: 'ink', from: l.t, to: s.t })),     // swing levels in neutral gray
         ...(tr ? [
@@ -438,6 +455,8 @@ export function chartItem(s) {
           { price: tr.entry, color: 'entry', after: true, title: 'Entry' },
           { price: tr.sl, color: 'neg', after: true, title: 'SL' },
           { price: tr.tp, color: 'pos', after: true, title: 'TP' },
+          ...(plan?.adds || []).map(a => ({ price: a.price, color: 'muted', after: true, title: `Add ${a.n}` })),
+          ...(plan?.adds.length === 2 ? [{ price: plan.adds[1].stop, color: 'muted', after: true, title: 'B/E' }] : []),
         ] : []),
       ],
       boxes: tr ? [

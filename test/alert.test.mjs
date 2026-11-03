@@ -57,9 +57,9 @@ test('heads-up, then confirmed', async () => {
   const parts = window5m({ at: 108, wick: 111, last: 107 });
   const pre = await run('pre', parts);
   assert.match(pre.message, /^<b>Swing Failures Spotted<\/b> 👀\n\n⏳ 4h close in 5m/);
-  assert.match(pre.message, /🔴 <b>AAVE short<\/b>  108\n├ 🎯 110 · 1\.8% in\n(├ 🛑 .*\n)?└ BTC trend: unknown/);
+  assert.match(pre.message, /🔴 <b>AAVE short<\/b>  108  ·  🥉 <b>C<\/b>\n├ 🎯 110 · 1\.8% in\n(├ 🛑 .*\n)?└ BTC trend: unknown/);
   const post = await run('close', parts);
-  assert.match(post.message, /✅ <b>AAVE short<\/b>  107/);
+  assert.match(post.message, /✅ <b>AAVE short<\/b>  107  ·  🥉 <b>C<\/b>/);
 });
 
 test('heads-up, then price closed back above the level: no signal', async () => {
@@ -70,13 +70,15 @@ test('heads-up, then price closed back above the level: no signal', async () => 
 
 test('a setup that only formed in the last 5 minutes', async () => {
   const parts = window5m({ at: 108, last: 108.5, lastWick: 111 });
-  assert.equal((await run('pre', parts)).message, null);
-  assert.match((await run('close', parts)).message, /🆕 <b>AAVE short<\/b>  108\.5\n├ 🎯 110 · late setup\n└ BTC trend/);
+  assert.match((await run('pre', parts)).message, /No setups/);
+  assert.match((await run('close', parts)).message, /🆕 <b>AAVE short<\/b>  108\.5  ·  🥉 <b>C<\/b>\n├ 🎯 110 · late setup\n(├ 🛑 .*\n)?└ BTC trend/);
 });
 
 test('quiet candles send nothing', async () => {
   const parts = window5m({ at: 104, last: 105 });
-  assert.equal((await run('pre', parts)).message, null);
+  const pre = await run('pre', parts);
+  assert.ok(pre.quiet);
+  assert.match(pre.message, /^😴 <b>No setups<\/b> · 4h close .*\n1 pairs checked$/);
   assert.equal((await run('close', parts)).message, null);
 });
 
@@ -115,6 +117,26 @@ test('each heads-up setup gets a chart image', async () => {
   const imgs = await chartImages(out);
   assert.equal(imgs.length, 1);
   assert.deepEqual([...imgs[0].png.subarray(0, 4)], [0x89, 0x50, 0x4e, 0x47]);          // PNG
-  assert.match(imgs[0].caption, /^🔴 <b>AAVE short<\/b>/);            // no opposing swing in this history, so no trade line
+  assert.match(imgs[0].caption, /^🔴 <b>AAVE short<\/b>/);            
   assert.deepEqual(await chartImages(await run('pre', window5m({ at: 104, last: 105 }))), []);
+});
+
+test('each setup gets a grade with the reason', async () => {
+  const { preMessage, closeMessage } = await import('../lib/sfp-alert.mjs');
+  const { gradeSetup } = await import('../public/sfp.js');
+  const bear = { bias: 'bearish', during: false };
+  assert.equal(gradeSetup('Short', { ny: bear, swept: true }).grade, 'A+');
+  assert.equal(gradeSetup('Short', { ny: bear }).grade, 'A');
+  assert.equal(gradeSetup('Short', { ny: { ...bear, during: true }, swept: true }).grade, 'A');
+  assert.equal(gradeSetup('Short', { ny: { ...bear, during: true } }).grade, 'B');
+  assert.equal(gradeSetup('Long', { ny: bear, swept: true }).grade, 'C');
+  assert.equal(gradeSetup('Long', {}).grade, 'C');
+  const sig = (side, close = 100) => ({ side, close, line: 99, inside: 0.01, levels: [{ price: 99 }], range: {} });
+  const w = { close: CLOSE };
+  const res = [{ symbol: 'ONDOUSDT', pre: [sig('Short')], final: [sig('Short')], closed: { c: 100 } }, { symbol: 'AAVEUSDT', pre: [sig('Long', 50)], final: [], closed: { c: 50 } }];
+  const pre = preMessage(res, w, { ny: bear, btcSweep: { pre: ['Short'] } });
+  assert.match(pre, /ONDO short<\/b>  100  ·  🏆 <b>A\+<\/b>\n/);
+  assert.match(pre, /BTC trend: unknown\n\n🟢 <b>AAVE long<\/b>  50  ·  🥉 <b>C<\/b>/);     // a blank line between setups
+  assert.ok(pre.indexOf('ONDO') < pre.indexOf('AAVE'));                 // best grade first
+  assert.match(closeMessage(res, w, { ny: { ...bear, during: true } }), /✅ <b>ONDO short<\/b>  100  ·  🥈 <b>B<\/b>\n/);
 });

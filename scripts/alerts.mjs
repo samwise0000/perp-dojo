@@ -29,7 +29,7 @@ try {
   const errs = out.errors.length ? ` · couldn't read ${out.errors.map(e => e.symbol).join(', ')}` : '';
   const d = !dry && out.message ? await deliver(out, { sendText: sendTelegram, sendPhotos }) : null;
   const pics = d ? ` with ${d.images} chart${d.images === 1 ? '' : 's'}${d.imageError ? ` (charts failed: ${d.imageError})` : ''}` : '';
-  console.log(`${stamp} · ${phase}: ${setups} setup${setups === 1 ? '' : 's'}, ${out.message ? (dry ? 'dry run' : 'sent' + pics) : 'nothing to send'}${errs}`);
+  console.log(`${stamp} · ${phase}: ${setups} setup${setups === 1 ? '' : 's'}, ${out.message ? (dry ? 'dry run' : out.quiet ? 'sent the no-setups note' : 'sent' + pics) : 'nothing to send'}${errs}`);
   if (dry && out.message) {
     console.log(out.message);
     // a dry run saves the charts it would send
