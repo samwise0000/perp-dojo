@@ -23,7 +23,7 @@ try {
   const out = await runAlerts({
     phase, now, pairs: pairsFrom(process.env.SFP_PAIRS), fetchCandles,
     tz: (process.env.ALERT_TZ || '').trim() || Intl.DateTimeFormat().resolvedOptions().timeZone,
-    link: (process.env.APP_URL || '').trim() ? process.env.APP_URL.trim().replace(/\/+$/, '') + '/#scanner' : '',
+    link: (process.env.APP_URL || '').trim() ? process.env.APP_URL.trim().replace(/\/+$/, '') + '/#signals' : '',
   });
   const setups = out.results.reduce((n, r) => n + r.pre.length, 0);
   const errs = out.errors.length ? ` · couldn't read ${out.errors.map(e => e.symbol).join(', ')}` : '';

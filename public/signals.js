@@ -1,11 +1,11 @@
 // Signals: every 4h swing failure signal on the default pairs, with the same
 // rules and filters as the Telegram alerts (sfp.js ALERT_SETTINGS), so the
 // site and the bot always agree. The Signals tab lists them all; the dashboard
-// shows the latest 24. Candles come from the scanner's IndexedDB cache.
+// shows the latest few. Candles come from the IndexedDB cache in signal-chart.js.
 import { detect, H4, ALERT_SETTINGS, DEFAULT_PAIRS, trendMap, btcSide, gradeSetup } from './sfp.js';
 import { sessionList, nyBiasAt } from './bias.js';
 import { idbGet, idbSet } from './db.js';
-import { candlesFor, pool, showOnChart, bindScanner } from './scanner.js';
+import { candlesFor, pool, showOnChart, bindCharts } from './signal-chart.js';
 
 const DAY = 86_400_000;
 const $ = s => document.querySelector(s);
@@ -23,7 +23,7 @@ const progress = { pairs: new Map(), stage: 'idle', subs: new Set() };
 const notify = () => progress.subs.forEach(f => f());
 let ctx_ = null;
 export function loadSignals(ctx, days) {
-  bindScanner(ctx); ctx_ = ctx;
+  bindCharts(ctx); ctx_ = ctx;
   const candle = Math.floor(Date.now() / H4);
   if (held && held.candle === candle && held.days >= days) return held.p.then(r => ({ ...r, signals: r.signals.filter(s => s.t >= Date.now() - days * DAY) }));
   const p = compute(days);
@@ -162,7 +162,7 @@ try { const g = JSON.parse(localStorage.getItem(GRADE_KEY) || 'null'); if (Array
 const gradeOk = s => (s.grade ? tab.grades.has(s.grade.grade) : tab.grades.size === GRADES.length);
 
 export function renderSignalsView(ctx) {
-  bindScanner(ctx);
+  bindCharts(ctx);
   tab.ctx = ctx;
   if (!tab.wired) {
     tab.wired = true;

@@ -26,7 +26,6 @@
       <button type="button" data-view="wizard"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 4.5 4 6l2.5-3M2.5 10.5 4 12l2.5-3M8.5 4.5h5M8.5 10.5h5"/></svg>Entry wizard</button>
       <button type="button" data-view="trades"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2 3.5h12M2 8h12M2 12.5h12"/></svg>Trades</button>
       <button type="button" data-view="signals"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2.5a4 4 0 0 0-4 4v3l-1.5 2h11L12 9.5v-3a4 4 0 0 0-4-4ZM6.5 13.5a1.5 1.5 0 0 0 3 0"/></svg>Signals</button>
-      <button type="button" data-view="scanner"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2 11.5h3.5l1.5-6 2 8 1.5-4h3.5"/></svg>SFP scanner<span class="beta-badge">Beta</span></button>
     </nav>
 
     <div class="side-exports">
@@ -185,6 +184,7 @@
         </div>
 
         <div id="warnings" class="warnings c12" role="status" aria-live="polite"></div>
+        <aside id="dayPlaybook" class="day-playbook c12" aria-label="Today’s playbook" hidden></aside>
 
         <div id="posCard" class="card c6 accented pos-card" style="--a: var(--a4)">
           <div class="card-row">
@@ -666,7 +666,7 @@
           <div class="card-row">
             <div>
               <h2>Every swing failure signal</h2>
-              <p class="sub">4h swing failures on your 54-pair watchlist, with the same rules and filters as the Telegram alerts (the scanner's Balanced preset). Closed 4h candles only. Each is scored as a trade: entry at the signal candle's close, stop at its wick, target at the opposing swing level the move started from, whichever is hit first (a candle that touches both counts as the stop). Results are in R, before and after Bybit's standard fees. Click a row to see the trade on the chart.</p>
+              <p class="sub">4h swing failures on your 54-pair watchlist, with the same rules and filters as the Telegram alerts. Closed 4h candles only. Each is scored as a trade: entry at the signal candle's close, stop at its wick, target at the opposing swing level the move started from, whichever is hit first (a candle that touches both counts as the stop). Results are in R, before and after Bybit's standard fees. Click a row to see the trade on the chart.</p>
             </div>
             <div class="sig-head-right">
               <select id="sigPeriod" aria-label="Period"><option value="90">Last 90 days</option><option value="180">Last 180 days</option><option value="365">Last year</option></select>
@@ -695,113 +695,6 @@
           <div class="table-wrap"><table id="sigTable" class="data"></table></div>
           <button id="sigMore" class="btn more" type="button" hidden></button>
         </div>
-        </div>
-      </section>
-
-      <section id="view-scanner" class="grid" hidden>
-        <div class="card c12 accented" style="--a: var(--a2)">
-          <div class="card-row">
-            <div>
-              <h2>4h swing failure backtest</h2>
-              <p class="sub">A swing high's level is the top of its candle body (bottom for a swing low). A signal is a 4h candle that wicks past a level and closes back inside it. Public Bybit candles, no key used. Nothing here trades. Telegram alerts run separately on the server (see the README).</p>
-            </div>
-            <button id="sfpRun" class="btn primary" type="button">Run backtest</button>
-          </div>
-          <div class="sfp-settings">
-            <label class="sfp-pairs">Pairs (USDT perps)<textarea id="sfpPairs" rows="2" spellcheck="false"></textarea></label>
-            <label>Backtest period
-              <select id="sfpPeriod"><option value="30">Last 30 days</option><option value="60">Last 60 days</option><option value="90">Last 90 days</option><option value="180">Last 180 days</option></select>
-            </label>
-            <label>Candles after a swing<input id="sfpRight" type="number" min="1" max="20" step="1"></label>
-            <label>Candles before a swing<input id="sfpLeft" type="number" min="0" max="20" step="1"></label>
-            <label>Min candles from swing to test<input id="sfpMinAge" type="number" min="0" max="100" step="1"></label>
-            <label>Min sweep past level (%)<input id="sfpMinSweep" type="number" min="0" max="5" step="0.05" title="How far the wick must go past the level to count as a sweep. A wick that barely touches a level is ignored and doesn't use the level up."></label>
-            <label>Level lookback (days)<input id="sfpLookback" type="number" min="1" max="120" step="1"></label>
-            <label>Range measured over (days)<input id="sfpRangeDays" type="number" min="1" max="60" step="1" title="The range a level is placed in: highest high to lowest low over this many days before the signal"></label>
-            <label>Range edge only: outer % of range<input id="sfpEdge" type="number" min="0" max="50" step="5" title="Shorts need their level in the top this-% of the lookback range, longs in the bottom. 0 turns it off."></label>
-            <label class="check"><input id="sfpOutermost" type="checkbox"> Only the outermost level (no live level beyond it)</label>
-            <label class="check"><input id="sfpSmt" type="checkbox"> Counter to BTC's 4h trend: require a 15m SMT against BTC</label>
-            <label>BTC trend: 4h EMA length<input id="sfpEma" type="number" min="5" max="200" step="1" title="BTC is in an uptrend when its 4h close is above this EMA"></label>
-            <label>SMT form
-              <select id="sfpSmtType">
-                <option value="strength">BTC takes its low/high, the pair holds</option>
-                <option value="sweep">The pair takes its low/high, BTC holds</option>
-              </select>
-            </label>
-            <label>SMT reference window
-              <select id="sfpSmtRef" title="The low (or high) each market takes or holds: its extreme over this window before the signal candle">
-                <option value="any">Any of 4h, 8h or 16h</option><option value="16">4h (16 × 15m)</option><option value="32">8h (32 × 15m)</option><option value="64">16h (64 × 15m)</option>
-              </select>
-            </label>
-            <label>BTC neutral zone: % from EMA<input id="sfpBand" type="number" min="0" max="5" step="0.5" title="Within this % of its EMA, BTC counts as neutral, so no signal is counter-trend"></label>
-            <label class="check"><input id="sfpBreak" type="checkbox"> A 4h close beyond a level breaks it</label>
-            <label class="check"><input id="sfpOnce" type="checkbox"> A level can only trigger once</label>
-            <div class="sfp-presets">
-              <span class="muted small">Filtering</span>
-              <div class="seg small" role="group" aria-label="Filter preset">
-                <button type="button" data-sfp-preset="balanced" title="Min age 10, sweep at least 0.1%, outer 35% of range, BTC neutral within 1% of its EMA, SMT on any of 4h/8h/16h">Balanced</button>
-                <button type="button" data-sfp-preset="strict" title="Min age 12, sweep at least 0.1%, outer 25% of range, no neutral zone, SMT on 8h">Strict</button>
-              </div>
-              <button id="sfpReset" class="btn ghost small-btn" type="button">Reset to defaults</button>
-            </div>
-          </div>
-          <div id="sfpStatus" class="muted small sfp-status"></div>
-        </div>
-
-        <div class="card c12 accented sfp-forming" style="--a: var(--a4)">
-          <div class="card-row">
-            <div>
-              <div class="kicker"><span id="sfpFormLive" class="live-dot" aria-hidden="true"></span>Forming now</div>
-              <p class="sub">Pairs that would signal if the current 4h candle closed at today's price, with your settings above. Rechecked every minute while this tab is open. The Telegram heads-up checks the same thing 5 minutes before the close.</p>
-            </div>
-            <div class="sfp-form-right">
-              <span id="sfpFormClose" class="muted small"></span>
-              <button id="sfpFormCheck" class="icon-btn" type="button" aria-label="Check now" title="Check now">↻</button>
-            </div>
-          </div>
-          <div id="sfpForming" class="sfp-latest"></div>
-        </div>
-
-        <div id="sfpResults" class="c12 grid sfp-results" hidden>
-          <div class="card c12 accented" style="--a: var(--a5)">
-            <div class="card-row">
-              <div class="kicker">Latest 4h close</div>
-              <div class="muted small" id="sfpNextClose"></div>
-            </div>
-            <div id="sfpLatest" class="sfp-latest"></div>
-          </div>
-          <dl id="sfpSummary" class="c12 sfp-summary"></dl>
-          <div class="card c12">
-            <div class="card-row">
-              <div>
-                <h2>Signals on the chart</h2>
-                <p class="sub">Every signal for one pair on its 4h candles. Down arrows are short signals, up arrows are long signals. Lines are levels, from the swing candle's body until the level broke or expired: solid if it produced a signal, dotted if not. Hover an arrow for details and its 24h result, click it to open the signal.</p>
-              </div>
-              <div class="trades-tools">
-                <select id="sfpChartPair" aria-label="Pair to chart"></select>
-                <label class="check small"><input id="sfpChartLevels" type="checkbox" checked> Levels</label>
-              </div>
-            </div>
-            <div id="sfpChart" class="sfp-chart"></div>
-            <div id="sfpChartNote" class="muted small"></div>
-          </div>
-          <div class="card c12">
-            <h2>By pair</h2>
-            <p class="sub">"In favor" is the move from the signal close in the trade's direction. Click a pair to filter the signals below.</p>
-            <div class="table-wrap"><table id="sfpPairTable" class="data compact"></table></div>
-          </div>
-          <div class="card c12">
-            <div class="card-row">
-              <div><h2>Signals</h2><p id="sfpCount" class="sub"></p></div>
-              <div class="trades-tools">
-                <select id="sfpPairFilter" aria-label="Filter by pair"></select>
-                <select id="sfpSideFilter" aria-label="Filter by side"><option value="all">Longs and shorts</option><option value="Long">Longs</option><option value="Short">Shorts</option></select>
-              </div>
-            </div>
-            <p class="sub">Click a signal to see it on the 4h chart with its levels.</p>
-            <div class="table-wrap"><table id="sfpTable" class="data"></table></div>
-            <button id="sfpMore" class="btn more" type="button" hidden></button>
-          </div>
         </div>
       </section>
 

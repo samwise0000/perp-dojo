@@ -1,3 +1,4 @@
+import { renderPlaybook as renderDayCard } from './day-playbook.js';
 import {
   summarize, groupStats, periodPnl, byWeekday, byHour, histogram, insights,
   dailyMap, dayStreaks, tradingScore, calendarMonth, scaleOf, dayKey, WEEKDAYS, warnings, WARN, dailyLoss, weekStart, weekReview,
@@ -5,7 +6,6 @@ import {
   TRADE_TAGS, tagKind, tagStats, dayRecap,
 } from './metrics.js';
 import { openReplay } from './replay.js';
-import { renderScanner } from './scanner.js';
 import { renderSignalsView, renderSignalsWidget } from './signals.js';
 import { nySessions, currentBias, NY_HOURS, NY_TZ } from './bias.js';
 import { normalizeAll } from './trades.js';
@@ -134,7 +134,7 @@ applyTheme(savedTheme() || systemTheme());
 matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => { if (!savedTheme()) applyTheme(systemTheme()); });
 
 // ---------- views ----------
-const TITLES = { dashboard: 'Dashboard', analytics: 'Analytics', journal: 'Journal', review: 'Weekly review', reports: 'Reports', playbook: 'Playbook', wizard: 'Entry wizard', trades: 'Trades', signals: 'Signals', scanner: 'SFP scanner' };
+const TITLES = { dashboard: 'Dashboard', analytics: 'Analytics', journal: 'Journal', review: 'Weekly review', reports: 'Reports', playbook: 'Playbook', wizard: 'Entry wizard', trades: 'Trades', signals: 'Signals' };
 function setView(v, { hash = true } = {}) {
   view = v; store.set('view', v);
   if (hash) syncHash();
@@ -479,8 +479,7 @@ function render() {
     ? `${s.n.toLocaleString()} closed trade${s.n === 1 ? '' : 's'} · ${date(from ?? s.first)} – ${date(to ?? s.last)}${filters.symbol !== 'all' ? ' · ' + filters.symbol : ''}${filters.side !== 'all' ? ' · ' + filters.side.toLowerCase() + 's' : ''}${filters.strategy !== 'all' ? ' · ' + (filters.strategy === 'none' ? 'unlabeled' : strategyName(filters.strategy)) : ''}`
     : 'No closed trades in this range.';
   // the journal is about days, not the filtered range: no filters, its own subtitle
-  $('#report .filters').hidden = ['journal', 'playbook', 'wizard', 'review', 'reports', 'scanner', 'signals'].includes(view);
-  if (view === 'scanner') $('#rangeText').textContent = 'Beta · backtest your 4h swing failure entries across your pairs';
+  $('#report .filters').hidden = ['journal', 'playbook', 'wizard', 'review', 'reports', 'signals'].includes(view);
   if (view === 'signals') $('#rangeText').textContent = 'Every 4h swing failure on your pairs, as the Telegram alerts see them';
   if (view === 'reports') $('#rangeText').textContent = 'A written report for each month, from every trade in it';
   if (view === 'review') $('#rangeText').textContent = 'One week at a time: the numbers, your rules, and what to change';
@@ -498,12 +497,11 @@ function render() {
   else if (view === 'wizard') renderWizard();
   else if (view === 'review') renderReview();
   else if (view === 'reports') renderReports();
-  else if (view === 'scanner') renderScanner(scanCtx());
   else if (view === 'signals') renderSignalsView(scanCtx());
   else renderTrades(trades);
 }
 
-// what the scanner and the Signals tab need from the page
+// what the Signals tab and its charts need from the page
 const scanCtx = () => ({ apiJson, openReplay, fmt: { money, price, dateTime, signedPct, pct } });
 
 // ===== dashboard =====
@@ -543,6 +541,7 @@ function renderDashboard(trades, s, from, to) {
   $('#avgLoss').textContent = money(-s.avgLoss || null);
 
   renderWarnings(s, ds);
+  renderDayPlaybook();
   renderPositions();
   refreshPositions();
   renderDashTiming(trades);
@@ -884,6 +883,9 @@ function renderRecap() {
   $('#rcTips').replaceChildren(...r.suggestions.map(x => el('li', '', x)));
 }
 
+// ---- today's playbook (public/playbook.js); re-drawn as the day or NY session changes ----
+function renderDayPlaybook() { renderDayCard($('#dayPlaybook'), { nyLive: Boolean(bias?.sessions?.[0]?.live && !bias.sessions[0].pending) }); }
+
 // ---- NY bias: did the last New York session close above or below its open ----
 // Public 15m candles, no key. Re-read every minute while the dashboard is open,
 // which is cheap, and keeps the live session and the flip at the close current.
@@ -902,7 +904,7 @@ async function refreshBias(force = false) {
     bias = { sym, hours, at: now, sessions: nySessions(candles, { hours, now, days: 5 }) };
   } catch (e) { bias = { sym, hours, at: now, error: e.message }; }
   finally { biasBusy = false; }
-  if (view === 'dashboard') renderBias();
+  if (view === 'dashboard') { renderBias(); renderDayPlaybook(); }
   // re-read right after a running session closes, so the pill flips at 5 PM ET rather than up to a minute later
   clearTimeout(biasFlip);
   const live = bias?.sessions?.[0];
@@ -2194,7 +2196,7 @@ function readHash() {
   if (m[1] === 'playbook' && m[2]) pb.id = m[2];
   if (m[1] === 'reports' && /^\d{4}-\d{2}$/.test(m[2] || '')) rpt.month = m[2];
   if (m[1] === 'review' && /^\d{4}-\d{2}-\d{2}$/.test(m[2] || '')) rv.week = weekStart(fromInput(m[2]));
-  view = m[1];
+  view = m[1] === 'scanner' ? 'signals' : m[1];                  // the old SFP scanner link goes to Signals
   return true;
 }
 window.addEventListener('hashchange', () => { if (readHash() && !$('#report').hidden) setView(view, { hash: false }); });

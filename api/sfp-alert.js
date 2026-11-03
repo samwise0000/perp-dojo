@@ -20,7 +20,7 @@ export default async function handler(req, res) {
   const phase = q.phase, dry = q.dry === '1';
   if (!['pre', 'close', 'test'].includes(phase)) return json(res, 400, { error: 'phase must be pre, close or test.' });
   if (!dry && !telegramReady()) return json(res, 503, { error: 'TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID are not set.' });
-  const link = (process.env.APP_URL || '').trim() ? process.env.APP_URL.trim().replace(/\/+$/, '') + '/#scanner' : '';
+  const link = (process.env.APP_URL || '').trim() ? process.env.APP_URL.trim().replace(/\/+$/, '') + '/#signals' : '';
 
   try {
     if (phase === 'test') {
