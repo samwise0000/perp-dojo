@@ -82,9 +82,16 @@ export function makeFills(trades) {
 
 export function startMock({ port = 9999, writable = false, trades = makeTrades() } = {}) {
   const fills = makeFills(trades);
-  const calls = [];
-  const server = http.createServer((req, res) => {
+  const calls = [], telegram = [];
+  const server = http.createServer(async (req, res) => {
     const url = new URL(req.url, 'http://x');
+    // Telegram's sendMessage, so alert tests can see what would be sent
+    if (/^\/bot[^/]+\/sendMessage$/.test(url.pathname)) {
+      let body = ''; for await (const c of req) body += c;
+      telegram.push({ token: url.pathname.split('/')[1].slice(3), ...JSON.parse(body) });
+      res.writeHead(200, { 'content-type': 'application/json' });
+      return res.end(JSON.stringify({ ok: true, result: { message_id: telegram.length } }));
+    }
     const send = (body, retCode = 0, retMsg = 'OK') => {
       res.writeHead(200, { 'content-type': 'application/json', 'x-bapi-limit-status': '40' });
       res.end(JSON.stringify({ retCode, retMsg, result: body, retExtInfo: {}, time: Date.now() }));
@@ -151,7 +158,7 @@ export function startMock({ port = 9999, writable = false, trades = makeTrades()
     }
     send({}, 10005, 'Permission denied');
   });
-  return new Promise(r => server.listen(port, '127.0.0.1', () => r({ server, calls, trades })));
+  return new Promise(r => server.listen(port, '127.0.0.1', () => r({ server, calls, trades, telegram })));
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {

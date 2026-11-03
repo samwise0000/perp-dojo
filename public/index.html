@@ -25,6 +25,7 @@
       <button type="button" data-view="playbook"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 2.5h4.5a1.5 1.5 0 0 1 1.5 1.5v9.5a1 1 0 0 0-1-1h-5z"/><path d="M13.5 2.5H9A1.5 1.5 0 0 0 7.5 4v9.5a1 1 0 0 1 1-1h5z"/></svg>Playbook</button>
       <button type="button" data-view="wizard"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 4.5 4 6l2.5-3M2.5 10.5 4 12l2.5-3M8.5 4.5h5M8.5 10.5h5"/></svg>Entry wizard</button>
       <button type="button" data-view="trades"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2 3.5h12M2 8h12M2 12.5h12"/></svg>Trades</button>
+      <button type="button" data-view="signals"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2.5a4 4 0 0 0-4 4v3l-1.5 2h11L12 9.5v-3a4 4 0 0 0-4-4ZM6.5 13.5a1.5 1.5 0 0 0 3 0"/></svg>Signals</button>
       <button type="button" data-view="scanner"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2 11.5h3.5l1.5-6 2 8 1.5-4h3.5"/></svg>SFP scanner<span class="beta-badge">Beta</span></button>
     </nav>
 
@@ -95,10 +96,17 @@
 
     <div id="report" hidden>
       <header class="head">
-        <div>
-          <h1 id="viewTitle">Dashboard</h1>
-          <p id="rangeText" class="muted"></p>
-        </div>
+          <div class="head-title">
+            <h1 id="viewTitle">Dashboard</h1>
+            <div id="biasCard" class="bias-pill" hidden>
+              <span class="bias-label">NY bias <button class="info" type="button" data-info="Bullish when the last New York session (8 AM – 5 PM ET) closed above where it opened on BTC, bearish when it closed below. Daylight saving is handled; weekends have no session, so Monday uses Friday. The arrows are the last five sessions, newest on the right. Public 15-minute candles, no key used.">i</button></span>
+              <span id="biasBadge" class="bias-badge"></span>
+              <span id="biasDetail" class="bias-detail muted small"></span>
+              <span id="biasLive" class="bias-live small"></span>
+              <span id="biasHist" class="bias-hist"></span>
+            </div>
+          </div>
+        <div class="head-right">
         <div class="filters" role="toolbar" aria-label="Filters">
           <button id="rangeBtn" class="btn" type="button" aria-haspopup="dialog"><svg viewBox="0 0 16 16" aria-hidden="true"><rect x="1.5" y="2.5" width="13" height="12" rx="2"/><path d="M1.5 6.5h13M5 1v3M11 1v3"/></svg><span id="rangeLabel">All time</span></button>
           <select id="symbolFilter" aria-label="Market"></select>
@@ -108,6 +116,8 @@
             <option value="Long">Longs only</option>
             <option value="Short">Shorts only</option>
           </select>
+        </div>
+        <p id="rangeText" class="muted range-text"></p>
         </div>
       </header>
 
@@ -129,37 +139,6 @@
             <div class="today-note">
               <textarea id="tdText" rows="3" placeholder="Today's journal: your plan, how you feel, what you're watching…" aria-label="Today's journal entry"></textarea>
               <div class="today-foot"><span id="tdSaved" class="muted small"></span><button id="tdOpen" class="btn ghost small-btn" type="button">Open full entry →</button></div>
-            </div>
-          </div>
-        </div>
-
-        <div id="recapCard" class="card c12 accented recap-card" style="--a: var(--a2)" hidden>
-          <div class="card-row recap-head">
-            <div class="recap-head-left">
-              <div class="kicker" id="rcKicker">Yesterday's recap</div>
-              <h2 id="rcTitle" class="recap-title"></h2>
-              <span id="rcPeek" class="today-peek muted small"></span>
-            </div>
-            <div class="recap-head-right">
-              <a id="rcJournal" class="more-link" href="#journal">Journal entry</a>
-              <button id="rcCollapse" class="icon-btn today-toggle" type="button" aria-expanded="true" aria-controls="rcBody" title="Collapse"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 10l4-4 4 4"/></svg></button>
-            </div>
-          </div>
-          <div id="rcBody" class="recap-body">
-            <dl id="rcStats" class="recap-stats"></dl>
-            <div class="recap-cols">
-              <div>
-                <div class="kicker">Rules</div>
-                <ul id="rcRules" class="recap-rules"></ul>
-              </div>
-              <div>
-                <div class="kicker">Your notes</div>
-                <div id="rcNotes" class="recap-notes"></div>
-              </div>
-              <div>
-                <div class="kicker">Suggestions for today</div>
-                <ol id="rcTips" class="recap-tips"></ol>
-              </div>
             </div>
           </div>
         </div>
@@ -207,7 +186,7 @@
 
         <div id="warnings" class="warnings c12" role="status" aria-live="polite"></div>
 
-        <div id="posCard" class="card c12 accented pos-card" style="--a: var(--a4)">
+        <div id="posCard" class="card c6 accented pos-card" style="--a: var(--a4)">
           <div class="card-row">
             <div class="kicker"><span id="posLive" class="live-dot" aria-hidden="true"></span>Open positions <span id="posCount" class="pos-count"></span></div>
             <div class="pos-head-right">
@@ -218,6 +197,14 @@
             </div>
           </div>
           <div id="posList" class="pos-list"></div>
+        </div>
+
+        <div id="sigCard" class="card c6 accented sig-card" style="--a: var(--a3)">
+          <div class="card-row">
+            <div class="kicker">Latest signals <button class="info" type="button" data-info="4h swing failure signals on your 51-pair watchlist, with the same rules and filters as the Telegram alerts (Balanced). The latest three, with BTC's 4h trend at the time and the move 24 hours later (or so far, if younger). Click one to see it on the chart, or open Signals for all of them.">i</button></div>
+            <div class="sig-head-right"><a class="more-link" href="#signals">All signals</a></div>
+          </div>
+          <div id="sigLatest" class="sig-grid"></div>
         </div>
 
         <div class="card c12 cum-card accented" style="--a: var(--a1)">
@@ -255,6 +242,37 @@
               </tbody>
             </table>
             <p class="muted small streak-note">A winning day is a day that closed with positive net P&amp;L. Days without trades don't break a run.</p>
+          </div>
+        </div>
+
+        <div id="recapCard" class="card c12 accented recap-card" style="--a: var(--a2)" hidden>
+          <div class="card-row recap-head">
+            <div class="recap-head-left">
+              <div class="kicker" id="rcKicker">Yesterday's recap</div>
+              <h2 id="rcTitle" class="recap-title"></h2>
+              <span id="rcPeek" class="today-peek muted small"></span>
+            </div>
+            <div class="recap-head-right">
+              <a id="rcJournal" class="more-link" href="#journal">Journal entry</a>
+              <button id="rcCollapse" class="icon-btn today-toggle" type="button" aria-expanded="true" aria-controls="rcBody" title="Collapse"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 10l4-4 4 4"/></svg></button>
+            </div>
+          </div>
+          <div id="rcBody" class="recap-body">
+            <dl id="rcStats" class="recap-stats"></dl>
+            <div class="recap-cols">
+              <div>
+                <div class="kicker">Rules</div>
+                <ul id="rcRules" class="recap-rules"></ul>
+              </div>
+              <div>
+                <div class="kicker">Your notes</div>
+                <div id="rcNotes" class="recap-notes"></div>
+              </div>
+              <div>
+                <div class="kicker">Suggestions for today</div>
+                <ol id="rcTips" class="recap-tips"></ol>
+              </div>
+            </div>
           </div>
         </div>
 
@@ -643,12 +661,48 @@
 
       <!-- ===================== TRADES ===================== -->
       <!-- ===================== SFP SCANNER (beta) ===================== -->
+      <section id="view-signals" class="grid" hidden>
+        <div class="card c12 accented" style="--a: var(--a3)">
+          <div class="card-row">
+            <div>
+              <h2>Every swing failure signal</h2>
+              <p class="sub">4h swing failures on your 51-pair watchlist, with the same rules and filters as the Telegram alerts (the scanner's Balanced preset). Closed 4h candles only. Each is scored as a trade: entry at the signal candle's close, stop at its wick, target at the opposing swing level the move started from, whichever is hit first (a candle that touches both counts as the stop). Results are in R, before and after Bybit's standard fees. Click a row to see the trade on the chart.</p>
+            </div>
+            <div class="sig-head-right">
+              <select id="sigPeriod" aria-label="Period"><option value="90">Last 90 days</option><option value="180">Last 180 days</option><option value="365">Last year</option></select>
+              <button id="sigRefresh" class="icon-btn" type="button" aria-label="Refresh" title="Refresh">↻</button>
+            </div>
+          </div>
+          <div id="sigStatus" class="muted small sfp-status"></div>
+          <div id="sigLoader" class="sig-loader" hidden>
+            <div class="sig-loader-head"><span class="sig-spinner" aria-hidden="true"></span><b>Scanning your watchlist</b><span id="sigLoadCount" class="muted small" aria-live="polite"></span></div>
+            <div class="sig-loader-bar"><i id="sigLoadBar"></i></div>
+            <div id="sigLoadPairs" class="sig-loader-pairs"></div>
+          </div>
+        </div>
+        <div id="sigResults" class="c12 grid sig-results">
+        <dl id="sigSummary" class="c12 sfp-summary"></dl>
+        <div class="card c12">
+          <div class="card-row">
+            <div class="kicker" id="sigCount"></div>
+            <div class="sig-filters">
+              <select id="sigPair" aria-label="Pair"></select>
+              <select id="sigSide" aria-label="Side"><option value="all">Longs and shorts</option><option value="Long">Longs</option><option value="Short">Shorts</option></select>
+              <select id="sigTrendF" aria-label="BTC trend"><option value="all">Any BTC trend</option><option value="aligned">Aligned with BTC</option><option value="counter">Countertrend</option><option value="neutral">BTC neutral</option></select>
+            </div>
+          </div>
+          <div class="table-wrap"><table id="sigTable" class="data"></table></div>
+          <button id="sigMore" class="btn more" type="button" hidden></button>
+        </div>
+        </div>
+      </section>
+
       <section id="view-scanner" class="grid" hidden>
         <div class="card c12 accented" style="--a: var(--a2)">
           <div class="card-row">
             <div>
               <h2>4h swing failure backtest</h2>
-              <p class="sub">A swing high's level is the top of its candle body (bottom for a swing low). A signal is a 4h candle that wicks past a level and closes back inside it. Public Bybit candles, no key used. Nothing here trades or sends alerts yet.</p>
+              <p class="sub">A swing high's level is the top of its candle body (bottom for a swing low). A signal is a 4h candle that wicks past a level and closes back inside it. Public Bybit candles, no key used. Nothing here trades. Telegram alerts run separately on the server (see the README).</p>
             </div>
             <button id="sfpRun" class="btn primary" type="button">Run backtest</button>
           </div>
@@ -660,6 +714,7 @@
             <label>Candles after a swing<input id="sfpRight" type="number" min="1" max="20" step="1"></label>
             <label>Candles before a swing<input id="sfpLeft" type="number" min="0" max="20" step="1"></label>
             <label>Min candles from swing to test<input id="sfpMinAge" type="number" min="0" max="100" step="1"></label>
+            <label>Min sweep past level (%)<input id="sfpMinSweep" type="number" min="0" max="5" step="0.05" title="How far the wick must go past the level to count as a sweep. A wick that barely touches a level is ignored and doesn't use the level up."></label>
             <label>Level lookback (days)<input id="sfpLookback" type="number" min="1" max="120" step="1"></label>
             <label>Range measured over (days)<input id="sfpRangeDays" type="number" min="1" max="60" step="1" title="The range a level is placed in: highest high to lowest low over this many days before the signal"></label>
             <label>Range edge only: outer % of range<input id="sfpEdge" type="number" min="0" max="50" step="5" title="Shorts need their level in the top this-% of the lookback range, longs in the bottom. 0 turns it off."></label>
@@ -683,13 +738,27 @@
             <div class="sfp-presets">
               <span class="muted small">Filtering</span>
               <div class="seg small" role="group" aria-label="Filter preset">
-                <button type="button" data-sfp-preset="balanced" title="Min age 10, outer 35% of range, BTC neutral within 1% of its EMA, SMT on any of 4h/8h/16h">Balanced</button>
-                <button type="button" data-sfp-preset="strict" title="Min age 12, outer 25% of range, no neutral zone, SMT on 8h">Strict</button>
+                <button type="button" data-sfp-preset="balanced" title="Min age 10, sweep at least 0.2%, outer 35% of range, BTC neutral within 1% of its EMA, SMT on any of 4h/8h/16h">Balanced</button>
+                <button type="button" data-sfp-preset="strict" title="Min age 12, sweep at least 0.2%, outer 25% of range, no neutral zone, SMT on 8h">Strict</button>
               </div>
               <button id="sfpReset" class="btn ghost small-btn" type="button">Reset to defaults</button>
             </div>
           </div>
           <div id="sfpStatus" class="muted small sfp-status"></div>
+        </div>
+
+        <div class="card c12 accented sfp-forming" style="--a: var(--a4)">
+          <div class="card-row">
+            <div>
+              <div class="kicker"><span id="sfpFormLive" class="live-dot" aria-hidden="true"></span>Forming now</div>
+              <p class="sub">Pairs that would signal if the current 4h candle closed at today's price, with your settings above. Rechecked every minute while this tab is open. The Telegram heads-up checks the same thing 5 minutes before the close.</p>
+            </div>
+            <div class="sfp-form-right">
+              <span id="sfpFormClose" class="muted small"></span>
+              <button id="sfpFormCheck" class="icon-btn" type="button" aria-label="Check now" title="Check now">↻</button>
+            </div>
+          </div>
+          <div id="sfpForming" class="sfp-latest"></div>
         </div>
 
         <div id="sfpResults" class="c12 grid sfp-results" hidden>

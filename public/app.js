@@ -6,6 +6,8 @@ import {
 } from './metrics.js';
 import { openReplay } from './replay.js';
 import { renderScanner } from './scanner.js';
+import { renderSignalsView, renderSignalsWidget } from './signals.js';
+import { nySessions, currentBias, NY_HOURS, NY_TZ } from './bias.js';
 import { normalizeAll } from './trades.js';
 import { pull } from './sync.js';
 import { idbGet, idbSet } from './db.js';
@@ -132,13 +134,14 @@ applyTheme(savedTheme() || systemTheme());
 matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => { if (!savedTheme()) applyTheme(systemTheme()); });
 
 // ---------- views ----------
-const TITLES = { dashboard: 'Dashboard', analytics: 'Analytics', journal: 'Journal', review: 'Weekly review', reports: 'Reports', playbook: 'Playbook', wizard: 'Entry wizard', trades: 'Trades', scanner: 'SFP scanner' };
+const TITLES = { dashboard: 'Dashboard', analytics: 'Analytics', journal: 'Journal', review: 'Weekly review', reports: 'Reports', playbook: 'Playbook', wizard: 'Entry wizard', trades: 'Trades', signals: 'Signals', scanner: 'SFP scanner' };
 function setView(v, { hash = true } = {}) {
   view = v; store.set('view', v);
   if (hash) syncHash();
   document.querySelectorAll('[data-view]').forEach(b => (b.dataset.view === v ? b.setAttribute('aria-current', 'page') : b.removeAttribute('aria-current')));
   for (const k of Object.keys(TITLES)) $('#view-' + k).hidden = k !== v;
   $('#viewTitle').textContent = TITLES[v];
+  $('#biasCard').hidden = v !== 'dashboard';
   if (all.length || status) render();
 }
 document.querySelectorAll('[data-view]').forEach(b => (b.onclick = () => setView(b.dataset.view)));
@@ -476,8 +479,9 @@ function render() {
     ? `${s.n.toLocaleString()} closed trade${s.n === 1 ? '' : 's'} · ${date(from ?? s.first)} – ${date(to ?? s.last)}${filters.symbol !== 'all' ? ' · ' + filters.symbol : ''}${filters.side !== 'all' ? ' · ' + filters.side.toLowerCase() + 's' : ''}${filters.strategy !== 'all' ? ' · ' + (filters.strategy === 'none' ? 'unlabeled' : strategyName(filters.strategy)) : ''}`
     : 'No closed trades in this range.';
   // the journal is about days, not the filtered range: no filters, its own subtitle
-  $('#report .filters').hidden = ['journal', 'playbook', 'wizard', 'review', 'reports', 'scanner'].includes(view);
+  $('#report .filters').hidden = ['journal', 'playbook', 'wizard', 'review', 'reports', 'scanner', 'signals'].includes(view);
   if (view === 'scanner') $('#rangeText').textContent = 'Beta · backtest your 4h swing failure entries across your pairs';
+  if (view === 'signals') $('#rangeText').textContent = 'Every 4h swing failure on your pairs, as the Telegram alerts see them';
   if (view === 'reports') $('#rangeText').textContent = 'A written report for each month, from every trade in it';
   if (view === 'review') $('#rangeText').textContent = 'One week at a time: the numbers, your rules, and what to change';
   if (view === 'wizard') $('#rangeText').textContent = 'Check the setup, get the amount to risk';
@@ -486,6 +490,7 @@ function render() {
     $('#rangeText').textContent = `${n} entr${n === 1 ? 'y' : 'ies'} · pick any day, or click one on the dashboard calendar`;
   }
   paintStatusStats(s);
+  $('#biasCard').hidden = view !== 'dashboard';
   if (view === 'dashboard') renderDashboard(trades, s, from, to);
   else if (view === 'analytics') renderAnalytics(trades, s, from, to);
   else if (view === 'journal') renderJournal();
@@ -493,14 +498,20 @@ function render() {
   else if (view === 'wizard') renderWizard();
   else if (view === 'review') renderReview();
   else if (view === 'reports') renderReports();
-  else if (view === 'scanner') renderScanner({ apiJson, openReplay, fmt: { money, price, dateTime, signedPct, pct } });
+  else if (view === 'scanner') renderScanner(scanCtx());
+  else if (view === 'signals') renderSignalsView(scanCtx());
   else renderTrades(trades);
 }
+
+// what the scanner and the Signals tab need from the page
+const scanCtx = () => ({ apiJson, openReplay, fmt: { money, price, dateTime, signedPct, pct } });
 
 // ===== dashboard =====
 function renderDashboard(trades, s, from, to) {
   renderToday();
   renderRecap();
+  renderBias();
+  refreshBias();
   const daily = dailyMap(trades);
   const ds = dayStreaks(daily);
 
@@ -535,6 +546,7 @@ function renderDashboard(trades, s, from, to) {
   renderPositions();
   refreshPositions();
   renderDashTiming(trades);
+  renderSignalsWidget(scanCtx());
 
   // cumulative P&L
   const tradeAt = new Map(trades.map(t => [t.time, t]));
@@ -872,6 +884,70 @@ function renderRecap() {
   $('#rcTips').replaceChildren(...r.suggestions.map(x => el('li', '', x)));
 }
 
+// ---- NY bias: did the last New York session close above or below its open ----
+// Public 15m candles, no key. Re-read every minute while the dashboard is open,
+// which is cheap, and keeps the live session and the flip at the close current.
+const BIAS_EVERY = 60_000;
+let bias = null, biasBusy = false;
+// BTC, over the 8 AM – 5 PM ET session
+const biasSymbol = () => 'BTCUSDT';
+const biasHours = () => NY_HOURS.session;
+async function refreshBias(force = false) {
+  const sym = biasSymbol(), hours = biasHours();
+  if (biasBusy || (!force && bias && bias.sym === sym && bias.hours === hours && Date.now() - bias.at < BIAS_EVERY - 1000)) return;
+  biasBusy = true;
+  const now = Date.now();
+  try {
+    const { candles } = await apiJson(`/api/klines?category=linear&symbol=${sym}&interval=15&start=${now - 9 * DAY}&end=${now}`);
+    bias = { sym, hours, at: now, sessions: nySessions(candles, { hours, now, days: 5 }) };
+  } catch (e) { bias = { sym, hours, at: now, error: e.message }; }
+  finally { biasBusy = false; }
+  if (view === 'dashboard') renderBias();
+}
+setInterval(() => { if (view === 'dashboard' && !document.hidden) refreshBias(); }, BIAS_EVERY);
+document.addEventListener('visibilitychange', () => { if (!document.hidden && view === 'dashboard') refreshBias(); });
+
+const nyTime = ms => new Date(ms).toLocaleTimeString(undefined, { timeZone: NY_TZ, hour: 'numeric', minute: '2-digit' });
+const biasDay = s => new Date(s.start).toLocaleDateString(undefined, { timeZone: NY_TZ, weekday: 'short', month: 'short', day: 'numeric' });
+const biasMark = b => (b === 'bullish' ? '▲' : b === 'bearish' ? '▼' : '■');
+const biasCls = b => (b === 'bullish' ? 'pos' : b === 'bearish' ? 'neg' : 'mid');
+
+function renderBias() {
+  const badge = $('#biasBadge'), detail = $('#biasDetail'), live = $('#biasLive'), hist = $('#biasHist');
+  if (!bias || bias.error) {
+    badge.className = 'bias-badge mid'; badge.textContent = '—';
+    detail.textContent = bias ? `Couldn’t read candles: ${bias.error}` : 'Reading the New York session…';
+    live.replaceChildren(); hist.replaceChildren();
+    return;
+  }
+  const cur = currentBias(bias.sessions);
+  badge.className = 'bias-badge ' + (cur ? biasCls(cur.bias) : 'mid');
+  badge.textContent = cur ? `${biasMark(cur.bias)} ${cur.bias[0].toUpperCase() + cur.bias.slice(1)}` : '—';
+  detail.textContent = cur
+    ? `${new Date(cur.start).toLocaleDateString(undefined, { timeZone: NY_TZ, weekday: 'short' })} ${signedPct(cur.change)}`
+    : 'No finished NY session in the last week.';
+  detail.title = cur ? `${bias.sym} NY session ${biasDay(cur)}: open ${price(cur.open)} at ${nyTime(cur.start)} ET → close ${price(cur.close)} at ${nyTime(cur.end)} ET · high ${price(cur.high)}, low ${price(cur.low)}` : '';
+
+  // today's session while it runs
+  const now = bias.sessions[0];
+  live.replaceChildren();
+  if (now?.live) {
+    live.append(el('span', 'live-dot', ''));
+    if (now.pending) live.append(document.createTextNode(`NY open ${nyTime(now.start)} ET`));
+    else { live.append(document.createTextNode('Today '), el('b', biasCls(now.bias), `${biasMark(now.bias)} ${signedPct(now.change)}`)); live.title = `Today's NY session so far; it closes at ${nyTime(now.end)} ET`; }
+  }
+
+  // the last few finished sessions, oldest first
+  const done = bias.sessions.filter(s => !s.live && !s.missing).slice(0, 5).reverse();
+  hist.replaceChildren(...done.map((s, i) => {
+    const latest = i === done.length - 1;
+    const d = el('i', 'bias-dot ' + biasCls(s.bias) + (latest ? ' current' : ''), biasMark(s.bias));
+    d.title = `${biasDay(s)}: ${s.bias} ${signedPct(s.change)}${latest ? ' · sets the current bias' : ''}`;
+    return d;
+  }));
+  hist.setAttribute('aria-label', 'Last NY sessions: ' + done.map(s => `${biasDay(s)} ${s.bias}`).join(', '));
+}
+
 // ---- open positions: live from Bybit while the dashboard is open ----
 const POS_EVERY = 15_000;
 let positions = null, posBusy = false;
@@ -908,6 +984,14 @@ const positionTrade = p => ({
   openedAt: p.openedAt, time: Date.now(), duration: p.openedAt ? Date.now() - p.openedAt : null,
 });
 
+// With nothing open, the positions card steps aside and the latest signals take the row.
+function showPosCard(show) {
+  const card = $('#posCard');
+  if (card.hidden === !show) return;
+  card.hidden = !show;
+  renderSignalsWidget(scanCtx());
+}
+
 function renderPositions() {
   const list = $('#posList');
   if (!positions) { list.replaceChildren(el('p', 'muted small', 'Checking Bybit for open positions…')); return; }
@@ -922,10 +1006,9 @@ function renderPositions() {
   const total = ps.reduce((n, p) => n + p.upnl, 0);
   $('#posEye').hidden = !ps.length;
   $('#posTotal').replaceChildren(...(ps.length ? [el('span', 'muted small', 'Unrealized '), posPnlHidden ? el('b', 'masked', '$' + MASK) : el('b', sign(total), money(total))] : []));
+  showPosCard(ps.length > 0);
   if (!ps.length) { list.replaceChildren(el('p', 'muted small pos-none', 'No open positions.')); return; }
 
-  // what a stop-out would do to today's daily loss limit
-  const lt = lossToday();
   list.replaceChildren(...ps.map(p => {
     const row = el('div', 'pos-row');
     const name = el('div', 'pos-name');
@@ -946,25 +1029,10 @@ function renderPositions() {
     liq.append(el('span', 'kicker', 'Liquidation'), el('span', 'num ' + lvl, p.liq ? `${price(p.liq)} · ${pct(dist, 1)} away` : 'none'));
     if (dist !== null) { const bar = el('i', 'liq-bar ' + lvl); bar.style.setProperty('--w', Math.min(1, dist / 0.25) * 100 + '%'); liq.append(bar); }
 
-    const sl = el('div', 'pos-cell');
-    sl.append(el('span', 'kicker', 'Stop-loss'));
-    if (!p.sl) sl.append(el('span', 'num danger', 'No stop-loss set'));
-    else {
-      sl.append(el('span', 'num', `${price(p.sl)} · ${money(p.slLoss)} if hit`));
-      if (lt.limit && p.slLoss < 0) {
-        const after = -(lt.net + p.slLoss), share = after / lt.limit;
-        sl.append(el('small', share >= 1 ? 'danger' : share >= 0.75 ? 'warn' : 'muted', share >= 1 ? `Breaks today’s ${WARN.dailyLossPct}% loss limit` : `${pct(Math.max(0, share))} of today’s loss limit`));
-      } else if (p.slLoss >= 0) sl.append(el('small', 'pos', 'Locks in profit'));
-    }
-
-    const tp = el('div', 'pos-cell');
-    tp.append(el('span', 'kicker', 'Take-profit'), el('span', 'num', p.tp ? `${price(p.tp)} · ${money(p.tpGain)}` : 'none'));
-    if (p.sl && p.tp && p.slLoss < 0) tp.append(el('small', 'muted', `${(p.tpGain / -p.slLoss).toFixed(1)} R reward to risk`));
-
     const btn = el('button', 'btn small-btn', 'Replay');
     btn.type = 'button';
     btn.onclick = () => openReplay(positionTrade(p), [positionTrade(p)], replayCtx());
-    row.append(name, pnl, px, liq, sl, tp, btn);
+    row.append(name, pnl, px, liq, btn);
     return row;
   }));
 }
@@ -2108,7 +2176,7 @@ function syncHash() {
   if (location.hash !== want) history.replaceState(null, '', want);
 }
 function readHash() {
-  const m = location.hash.match(/^#(dashboard|analytics|journal|review|reports|playbook|wizard|trades|scanner)(?:\/([\w-]+))?$/);
+  const m = location.hash.match(/^#(dashboard|analytics|journal|review|reports|playbook|wizard|trades|scanner|signals)(?:\/([\w-]+))?$/);
   if (!m) return false;
   if (m[1] === 'journal' && /^\d{4}-\d{2}-\d{2}$/.test(m[2] || '')) { jr.day = m[2]; const d = keyToDate(m[2]); jr.month = { y: d.getFullYear(), m: d.getMonth() }; }
   if (m[1] === 'playbook' && m[2]) pb.id = m[2];

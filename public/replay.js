@@ -163,6 +163,7 @@ async function show() {
     return;
   }
   if (!state || state.list[state.i] !== t || state.iv !== iv) return;   // moved on while loading
+  if (t.view?.trimTo) cs = cs.filter(c => c.t <= t.view.trimTo);       // a signal's chart ends soon after its trade
   if (!cs.length) { chart?.remove(); chart = null; box.replaceChildren(); note.textContent = 'Bybit has no candles for this market and time.'; return; }
 
   chart?.remove();
@@ -181,6 +182,13 @@ async function show() {
     priceFormat: { type: 'price', precision: decimals(cs), minMove: 10 ** -decimals(cs) },
   });
   series.setData(cs.map(c => ({ time: local(c.t), open: c.o, high: c.h, low: c.l, close: c.c })));
+  // room after the candles for a trade drawn to their right (empty time slots)
+  const sideRoom = t.view && [...(t.view.boxes || []), ...t.view.lines].some(x => x.after);
+  if (sideRoom) {
+    const last = cs[cs.length - 1].t, pad = [];
+    for (let k = 1; k <= SIDE.gap + SIDE.width + SIDE.tail; k++) pad.push({ time: local(last + k * iv.ms) });
+    series.setData([...cs.map(c => ({ time: local(c.t), open: c.o, high: c.h, low: c.l, close: c.c })), ...pad]);
+  }
 
   const long = t.dir === 'Long', result = t.pnl >= 0 ? pos : neg, entryC = entryColor(pos, neg) || ink;
   const snap = ms => local(Math.floor(ms / iv.ms) * iv.ms);
@@ -189,12 +197,39 @@ async function show() {
   const color = c => ({ pos, neg, entry: entryC, ink, muted: css('--muted') }[c] || c);
   if (t.view) {
     for (const m of t.view.marks) marks.push({ time: snap(m.t), position: m.position, shape: m.shape, color: color(m.color), size: m.shape === 'circle' ? 0.8 : 1.4, tip: m.tip });
+    // Things marked `after` (a trade's zones and lines) sit to the right of the
+    // candles, past a small gap, so they don't cover the price action.
+    const GAP = SIDE.gap, WIDTH = SIDE.width, lastT = cs[cs.length - 1].t;
+    const side = { from: lastT + GAP * iv.ms, to: lastT + (GAP + WIDTH) * iv.ms };
+    const span = (o) => (o.after ? side : { from: o.from, to: o.to });
+    const times = ({ from, to }, after) => {
+      if (!after) { const a = snap(from), z = snap(to); return cs.map(c => local(c.t)).filter(x => x >= a && x <= z); }
+      const out = []; for (let x = from; x <= to; x += iv.ms) out.push(local(x)); return out;
+    };
+    // shaded zones between two prices over a span of candles: the stop and target of a trade
+    for (const b of t.view.boxes || []) {
+      const fill = alpha(color(b.color), 0.16);
+      const zone = chart.addBaselineSeries({
+        baseValue: { type: 'price', price: b.base }, lineWidth: 1, topLineColor: 'transparent', bottomLineColor: 'transparent',
+        topFillColor1: fill, topFillColor2: fill, bottomFillColor1: fill, bottomFillColor2: fill,
+        lastValueVisible: false, priceLineVisible: false, crosshairMarkerVisible: false,
+        priceFormat: { type: 'price', precision: decimals(cs), minMove: 10 ** -decimals(cs) },
+      });
+      zone.setData(times(span(b), b.after).map(time => ({ time, value: b.price })));
+    }
     for (const l of t.view.lines) {
       // a segment between two candles (a level from its swing to its test), or a full-width line
-      if (l.from && l.to > l.from) {
+      if (l.after || (l.from && l.to > l.from)) {
         const seg = chart.addLineSeries({ color: color(l.color), lineWidth: 2, lastValueVisible: false, priceLineVisible: false, crosshairMarkerVisible: false,
           priceFormat: { type: 'price', precision: decimals(cs), minMove: 10 ** -decimals(cs) } });
-        seg.setData([{ time: snap(l.from), value: l.price }, { time: snap(l.to), value: l.price }]);
+        seg.setData(l.after ? [{ time: local(side.from), value: l.price }, { time: local(side.to), value: l.price }] : [{ time: snap(l.from), value: l.price }, { time: snap(l.to), value: l.price }]);
+        if (l.title) seg.createPriceLine({ price: l.price, color: color(l.color), lineVisible: false, axisLabelVisible: true, title: l.title });
+        if (l.after) {
+          // a dotted lead from the position to its label on the price axis
+          const lead = chart.addLineSeries({ color: color(l.color), lineWidth: 1, lineStyle: LW.LineStyle.Dotted, lastValueVisible: false, priceLineVisible: false, crosshairMarkerVisible: false,
+            priceFormat: { type: 'price', precision: decimals(cs), minMove: 10 ** -decimals(cs) } });
+          lead.setData([{ time: local(side.to), value: l.price }, { time: local(lastT + (SIDE.gap + SIDE.width + SIDE.tail) * iv.ms), value: l.price }]);
+        }
       } else series.createPriceLine({ price: l.price, color: color(l.color), lineWidth: 1, lineStyle: LW.LineStyle.Dotted, axisLabelVisible: true, title: l.title || '' });
     }
   }
@@ -231,7 +266,7 @@ async function show() {
   // frame the trade with some room either side
   const from = Number.isFinite(t.openedAt) ? t.openedAt : t.time;
   const room = Math.max(t.time - from, 40 * iv.ms) * 0.8;
-  chart.timeScale().setVisibleRange({ from: local(Math.max(cs[0].t, from - room)), to: local(Math.min(cs[cs.length - 1].t, t.time + room)) });
+  chart.timeScale().setVisibleRange({ from: local(Math.max(cs[0].t, from - room)), to: sideRoom ? local(lastT_(cs) + (SIDE.gap + SIDE.width + SIDE.tail) * iv.ms) : local(Math.min(cs[cs.length - 1].t, t.time + room)) });
 
   const x = t.view ? null : excursion(t, cs, iv);
   if (x) fill([
@@ -267,6 +302,19 @@ export function entryColor(pos, neg) {
   }
   return score >= 40 ? best : null;     // nothing clearly different: the caller falls back to ink
 }
+
+// A CSS color at the given opacity, for canvas fills (the chart can't use color-mix).
+const paint = document.createElement('canvas').getContext('2d');
+export function alpha(c, a) {
+  paint.fillStyle = '#000'; paint.fillStyle = c;
+  const v = paint.fillStyle;
+  if (v.startsWith('#')) { const n = parseInt(v.slice(1), 16); return `rgba(${n >> 16}, ${(n >> 8) & 255}, ${n & 255}, ${a})`; }
+  return v.replace(/rgba?\(([^)]+)\)/, (m, x) => `rgba(${x.split(',').slice(0, 3).join(',')}, ${a})`);
+}
+
+const lastT_ = cs => cs[cs.length - 1].t;
+// a trade drawn beside the candles: empty candles before it, its width, and room after
+const SIDE = { gap: 2, width: 10, tail: 10 };
 
 export function decimals(cs) {
   const p = cs[cs.length - 1].c;

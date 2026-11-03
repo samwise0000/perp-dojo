@@ -176,3 +176,31 @@ test('range window: a short range catches the local top that a long one calls mi
   assert.equal(detectAny(c, { ...o, rangeDays: 30 }).signals.filter(s => s.side === 'Short').length, 0);   // 118 is mid-range against 140
   assert.equal(detectAny(c, { ...o, rangeDays: 7 }).signals.filter(s => s.side === 'Short').length, 1);
 });
+
+// ---- the trade: entry at the close, stop at the wick, target at the opposing level ----
+const tradeBase = [
+  [100, 101, 99, 100], [100, 103, 99, 102], [102, 106, 101, 105], [105, 115, 104, 110],   // swing high: body top 110
+  [109, 110, 103, 104], [104, 106, 100, 101], [101, 103, 98, 100], [100, 101, 95, 97],
+  [97, 98, 90, 92],                                                                         // swing low: body bottom 92, where the rally starts
+  [92, 96, 91, 95], [95, 99, 94, 98], [98, 102, 97, 101], [101, 104, 100, 103],
+  [103, 111, 102, 108],                                                                     // sweep of 110, close 108: the signal
+];
+const tradeOf = rows => detect(mk(rows)).signals.find(s => s.k === 13).trade;
+
+test('trade: entry at the close, stop at the wick, target at the swing the move started from', () => {
+  const t = tradeOf(tradeBase);
+  assert.equal(t.entry, 108);
+  assert.equal(t.sl, 111);
+  assert.equal(t.tp, 92);
+  assert.ok(Math.abs(t.rr - 16 / 3) < 1e-12);
+  assert.equal(t.result, 'open');
+});
+
+test('trade: target hit is a win of rr, stop hit is −1R, both in one candle counts as the stop', () => {
+  assert.deepEqual([tradeOf([...tradeBase, [108, 109, 100, 101], [101, 102, 91, 93]]).result], ['win']);
+  assert.ok(Math.abs(tradeOf([...tradeBase, [108, 109, 100, 101], [101, 102, 91, 93]]).R - 16 / 3) < 1e-12);
+  const lost = tradeOf([...tradeBase, [108, 112, 105, 106]]);
+  assert.equal(lost.result, 'loss');
+  assert.equal(lost.R, -1);
+  assert.equal(tradeOf([...tradeBase, [108, 112, 91, 95]]).result, 'loss');
+});

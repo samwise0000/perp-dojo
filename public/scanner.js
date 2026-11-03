@@ -1,29 +1,27 @@
 // SFP scanner (beta): backtests the 4h swing failure rules in sfp.js across a
 // list of pairs, from Bybit's public candles. Candles are kept in IndexedDB,
 // so a re-run only fetches what has closed since.
-import { detect, closedOnly, H4, SFP_DEFAULTS, BTC_DEFAULTS, SMT_WINDOWS, M15, trendMap, counterTrend, smt } from './sfp.js';
+import { detect, closedOnly, H4, SFP_DEFAULTS, BTC_DEFAULTS, SMT_WINDOWS, M15, trendMap, counterTrend, smt, DEFAULT_PAIRS, OLD_DEFAULT_PAIRS, PRESETS, signalsIf, holdLine } from './sfp.js';
 import { idbGet, idbSet } from './db.js';
 import { loadLib, css, local, entryColor, decimals } from './replay.js';
 
 const DAY = 86_400_000;
-const DEFAULT_PAIRS = 'VVV HYPE STRK AAVE AERO JUP UNI ALGO LINK NEAR ETHFI ZEC SUI LIT AVAX WLD ONDO PENDLE ENA ZK MNT';
-// Presets for how hard to filter. Balanced is the default: it tested best over 90 days.
-const PRESETS = {
-  balanced: { minAge: 10, edge: 0.35, neutralBand: 0.01, smtRef: 'any' },
-  strict: { minAge: 12, edge: 0.25, neutralBand: 0, smtRef: 32 },
-};
 const DEFAULTS = { pairs: DEFAULT_PAIRS, period: 90, ...SFP_DEFAULTS, ...BTC_DEFAULTS, ...PRESETS.balanced };
 const KEY = 'perp-report:sfp';
 const $ = s => document.querySelector(s);
 const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text !== undefined) e.textContent = text; return e; };
 
 // Saved settings carry a version; when the defaults change on purpose, older
-// saves get the new rule (v2: one signal per level, no SMT requirement).
-const VERSION = 2;
+// saves get the new rule (v2: one signal per level, no SMT requirement;
+// v3: the full watchlist, if the pairs were still the first default list;
+// v4: a 0.2% minimum sweep, so a wick that barely touches a level doesn't use it up).
+const VERSION = 4;
 const load = () => {
   let saved = {};
   try { saved = JSON.parse(localStorage.getItem(KEY) || '{}'); } catch {}
   if ((saved.v || 1) < 2) { saved.once = true; saved.requireSmt = false; }
+  if ((saved.v || 1) < 3 && (!saved.pairs || saved.pairs.trim() === OLD_DEFAULT_PAIRS)) saved.pairs = DEFAULT_PAIRS;
+  if ((saved.v || 1) < 4) saved.minSweep = PRESETS.balanced.minSweep;
   const s = { ...DEFAULTS, ...saved, v: VERSION };
   save(s);
   return s;
@@ -34,12 +32,16 @@ const symbolsOf = text => [...new Set(text.toUpperCase().split(/[\s,$]+/).filter
 let ctx = null, settings = load(), result = null, busy = false, wired = false;
 const view = { pair: 'all', side: 'all', shown: 100, chartPair: null, levels: true };
 
+// Other views (Signals) reuse the candle cache and the chart window.
+export const bindScanner = c => { if (!ctx) ctx = c; };
+
 export function renderScanner(c) {
   ctx = c;
   if (!wired) wire();
   paintSettings();
   if (result) paintResults();
   paintNextClose();
+  checkForming();
 }
 
 function wire() {
@@ -54,6 +56,7 @@ function wire() {
       pairs: $('#sfpPairs').value, period: Number($('#sfpPeriod').value),
       right: clamp($('#sfpRight').value, 1, 20, DEFAULTS.right), left: clamp($('#sfpLeft').value, 0, 20, DEFAULTS.left),
       minAge: clamp($('#sfpMinAge').value, 0, 100, DEFAULTS.minAge),
+      minSweep: Math.min(5, Math.max(0, Number($('#sfpMinSweep').value) || 0)) / 100,
       lookbackDays: clamp($('#sfpLookback').value, 1, 120, DEFAULTS.lookbackDays),
       breakOnClose: $('#sfpBreak').checked, once: $('#sfpOnce').checked,
       edge: clamp($('#sfpEdge').value, 0, 50, DEFAULTS.edge * 100) / 100, rangeDays: clamp($('#sfpRangeDays').value, 1, 60, DEFAULTS.rangeDays), outermost: $('#sfpOutermost').checked,
@@ -62,12 +65,14 @@ function wire() {
     };
     save(settings);
   };
-  for (const id of ['#sfpPairs', '#sfpPeriod', '#sfpRight', '#sfpLeft', '#sfpMinAge', '#sfpLookback', '#sfpBreak', '#sfpOnce', '#sfpEdge', '#sfpRangeDays', '#sfpOutermost', '#sfpSmt', '#sfpEma', '#sfpSmtRef', '#sfpSmtType', '#sfpBand']) $(id).addEventListener('change', read);
+  for (const id of ['#sfpPairs', '#sfpPeriod', '#sfpRight', '#sfpLeft', '#sfpMinAge', '#sfpMinSweep', '#sfpLookback', '#sfpBreak', '#sfpOnce', '#sfpEdge', '#sfpRangeDays', '#sfpOutermost', '#sfpSmt', '#sfpEma', '#sfpSmtRef', '#sfpSmtType', '#sfpBand']) $(id).addEventListener('change', read);
   $('#sfpPairFilter').onchange = e => { view.pair = e.target.value; view.shown = 100; paintSignals(); if (view.pair !== 'all') { view.chartPair = view.pair; paintChart(); } };
   $('#sfpSideFilter').onchange = e => { view.side = e.target.value; view.shown = 100; paintSignals(); };
   $('#sfpChartPair').onchange = e => { view.chartPair = e.target.value; paintChart(); };
   $('#sfpChartLevels').onchange = e => { view.levels = e.target.checked; paintChart(); };
   setInterval(() => { if (!$('#view-scanner').hidden) paintNextClose(); }, 1000);
+  setInterval(() => { if (!$('#view-scanner').hidden && !document.hidden) checkForming(); }, 60_000);
+  $('#sfpFormCheck').onclick = () => checkForming(true);
 }
 const clamp = (v, lo, hi, d) => { const n = Math.round(Number(v)); return Number.isFinite(n) ? Math.min(hi, Math.max(lo, n)) : d; };
 
@@ -77,6 +82,7 @@ function paintSettings() {
   $('#sfpRight').value = settings.right;
   $('#sfpLeft').value = settings.left;
   $('#sfpMinAge').value = settings.minAge;
+  $('#sfpMinSweep').value = +(settings.minSweep * 100).toFixed(2);
   $('#sfpLookback').value = settings.lookbackDays;
   $('#sfpBreak').checked = settings.breakOnClose;
   $('#sfpOnce').checked = settings.once;
@@ -97,7 +103,7 @@ function paintSettings() {
 // ---- candles ----
 
 // Closed 4h candles from `start` to now, from the cache plus whatever is new.
-async function candlesFor(symbol, start) {
+export async function candlesFor(symbol, start) {
   const key = `sfp4h:linear:${symbol}`;
   let have = (await idbGet(key).catch(() => null)) || [];
   if (have.length && have[0].t > start) have = [];               // need older history than cached
@@ -127,7 +133,7 @@ async function m15(symbol, start, end) {
   return closed;
 }
 
-async function pool(items, n, fn) {
+export async function pool(items, n, fn) {
   const out = new Array(items.length);
   let i = 0;
   await Promise.all(Array.from({ length: Math.min(n, items.length) }, async () => {
@@ -297,7 +303,7 @@ async function paintChart() {
   // each line starts at its swing candle's body and runs until the level broke or expired
   const shownLevels = view.levels ? p.levels.filter(l => l.until >= from) : [];
   for (const l of shownLevels) {
-    const line = chart.addLineSeries({ color: l.hits ? entryC : muted, lineWidth: 1, lineStyle: l.hits ? LW.LineStyle.Solid : LW.LineStyle.Dotted,
+    const line = chart.addLineSeries({ color: l.hits ? ink : muted, lineWidth: 1, lineStyle: l.hits ? LW.LineStyle.Solid : LW.LineStyle.Dotted,
       lastValueVisible: false, priceLineVisible: false, crosshairMarkerVisible: false, priceFormat: { type: 'price', precision: dp, minMove: 10 ** -dp } });
     line.setData([{ time: local(Math.max(l.t, from)), value: l.price }, { time: local(l.until), value: l.price }]);
   }
@@ -395,48 +401,114 @@ function signalList(sigs) {
 }
 
 // ---- the chart: the replay window, on 4h candles, with the levels drawn ----
-function chartItem(s) {
-  const short = s.side === 'Short';
-  const firstSwing = Math.min(...s.levels.map(l => l.t));
+const rText = v => `${v >= 0 ? '+' : '−'}${Math.abs(v).toFixed(2)}R`;
+export function chartItem(s) {
+  const short = s.side === 'Short', tr = s.trade, p = ctx.fmt.price;
+  const firstSwing = Math.min(...s.levels.map(l => l.t), tr ? tr.tpT : Infinity);
+  // the chart runs to where the trade ended (or now, if it's still open)
+  const end = tr ? (tr.exitT ?? Math.floor(Date.now() / H4) * H4) : s.t;
+  const tradeStats = !tr ? [['Trade', 'No opposing level beyond the entry, so no target']] : [
+    ['Entry', `${p(tr.entry)} at the 4h close`],
+    ['Stop-loss', `${p(tr.sl)} at the wick · ${(tr.riskPct * 100).toFixed(2)}% away`, 'neg'],
+    ['Take-profit', `${p(tr.tp)} at the opposing level · ${tr.rr.toFixed(2)}R`, 'pos'],
+    ['Result', tr.result === 'win' ? `Target hit · ${rText(tr.R)}` : tr.result === 'loss' ? 'Stopped out · −1R' : `Open · ${rText(tr.R)} at the last close`, tr.result === 'win' ? 'pos' : tr.result === 'loss' ? 'neg' : ''],
+    ...(tr.exitT ? [['Closed', `${when(tr.exitT - H4)} · ${Math.round((tr.exitT - s.t) / H4)} candles in`]] : []),
+  ];
   return {
     symbol: s.symbol, category: 'linear', dir: s.side, entry: s.close, exit: s.close, size: 0, leverage: 1, pnl: 0, fees: 0, funding: 0,
-    openedAt: firstSwing, time: s.t + H4, duration: s.t + H4 - firstSwing,
+    openedAt: firstSwing, time: end + H4, duration: end + H4 - firstSwing,
     view: {
       interval: '240',
+      trimTo: tr ? end + 2 * H4 : undefined,                    // a couple of candles after the trade ends
       title: `${s.symbol} · SFP ${s.side.toLowerCase()} · ${when(s.t)}`,
       stats: [
         ['Signal', `${s.side} at the 4h close`, short ? 'neg' : 'pos'],
-        ['Levels failed at', s.levels.map(l => ctx.fmt.price(l.price)).join(', ')],
-        ['Wick past level', pctS(s.sweepPct).replace('+', '')],
-        ['BTC 4h trend', s.btc ? `${s.btc.up ? 'Up' : 'Down'}: close ${ctx.fmt.price(s.btc.close)} vs EMA ${ctx.fmt.price(s.btc.ema)} · ${s.counter ? 'counter-trend' : 'with the trend'}` : '—', s.counter ? 'neg' : ''],
+        ...tradeStats,
+        ['Levels failed at', s.levels.map(l => p(l.price)).join(', ')],
+        ['BTC 4h trend', s.btc ? `${s.btc.up ? 'Up' : 'Down'}: close ${p(s.btc.close)} vs EMA ${p(s.btc.ema)} · ${s.counter ? 'counter-trend' : 'with the trend'}` : '—', s.counter ? 'neg' : ''],
         ...(s.counter && s.smt?.alt ? [['15m SMT vs BTC', smtText(s), s.smt.ok ? 'pos' : 'neg']] : []),
-        ['Level in the range', s.range?.high ? `${rangeText(s)} · ${ctx.fmt.price(s.range.low)} – ${ctx.fmt.price(s.range.high)}` : '—'],
-        ['Close', ctx.fmt.price(s.close)],
+        ['Level in the range', s.range?.high ? `${rangeText(s)} · ${p(s.range.low)} – ${p(s.range.high)}` : '—'],
         ['After 24h', pctS(s.after24h), cls(s.after24h)],
-        ['Best / worst in 24h', s.best24h === null ? 'still open' : `${pctS(s.best24h)} / ${pctS(s.worst24h)}`],
       ],
       lines: [
-        ...s.levels.map(l => ({ price: l.price, color: 'entry', from: l.t, to: s.t })),
-        // the lookback range the level was measured against
-        ...(s.range?.high ? [{ price: s.range.high, color: 'muted', title: 'Range high' }, { price: s.range.low, color: 'muted', title: 'Range low' }] : []),
+        ...s.levels.map(l => ({ price: l.price, color: 'ink', from: l.t, to: s.t })),     // swing levels in neutral gray
+        ...(tr ? [
+          { price: tr.tp, color: 'ink', from: tr.tpT, to: s.t },                      // the opposing level, from its swing
+          // the position, drawn to the right of the candles
+          { price: tr.entry, color: 'entry', after: true, title: 'Entry' },
+          { price: tr.sl, color: 'neg', after: true, title: 'SL' },
+          { price: tr.tp, color: 'pos', after: true, title: 'TP' },
+        ] : []),
       ],
+      boxes: tr ? [
+        { after: true, price: tr.sl, base: tr.entry, color: 'neg' },
+        { after: true, price: tr.tp, base: tr.entry, color: 'pos' },
+      ] : [],
       marks: [
-        ...s.levels.map(l => ({ t: l.t, position: short ? 'aboveBar' : 'belowBar', shape: 'circle', color: 'entry', tip: [`Swing ${short ? 'high' : 'low'} · level ${ctx.fmt.price(l.price)}`, new Date(l.t).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })] })),
-        { t: s.t, position: short ? 'aboveBar' : 'belowBar', shape: short ? 'arrowDown' : 'arrowUp', color: short ? 'neg' : 'pos', tip: [`SFP ${s.side.toLowerCase()}`, `Wick ${ctx.fmt.price(short ? s.high : s.low)}, close ${ctx.fmt.price(s.close)}`] },
+        ...s.levels.map(l => ({ t: l.t, position: short ? 'aboveBar' : 'belowBar', shape: 'circle', color: 'ink', tip: [`Swing ${short ? 'high' : 'low'} · level ${p(l.price)}`, new Date(l.t).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })] })),
+        ...(tr ? [{ t: tr.tpT, position: short ? 'belowBar' : 'aboveBar', shape: 'circle', color: 'ink', tip: [`Opposing swing ${short ? 'low' : 'high'} · target ${p(tr.tp)}`] }] : []),
+        { t: s.t, position: short ? 'aboveBar' : 'belowBar', shape: short ? 'arrowDown' : 'arrowUp', color: short ? 'neg' : 'pos', tip: [`SFP ${s.side.toLowerCase()} · entry ${p(s.close)}`, `Wick ${p(short ? s.high : s.low)} is the stop`] },
+        ...(tr?.exitT ? [{ t: tr.exitT, position: tr.result === 'win' ? (short ? 'belowBar' : 'aboveBar') : (short ? 'aboveBar' : 'belowBar'), shape: 'square', color: tr.result === 'win' ? 'pos' : 'neg', tip: [tr.result === 'win' ? `Target hit · ${rText(tr.R)}` : 'Stopped out · −1R'] }] : []),
       ],
-      note: 'Each line is a level, from its swing candle’s body to the signal candle. Circles mark the swing candles, the arrow marks the signal candle. The gray dotted lines are the range high and low the level was measured against.',
+      note: 'Entry at the signal candle’s close, stop at its wick, target at the opposing swing level the move started from. The position is drawn to the right of the candles: red is the risk, the other zone the reward. Circles mark the swing candles; the square marks where the trade ended.',
     },
   };
 }
 // The chart window steps through `list` oldest to newest, whatever order it's shown in.
-function showOnChart(s, list) {
+export function showOnChart(s, list) {
   const sorted = [...list].sort((a, b) => a.t - b.t || a.symbol.localeCompare(b.symbol));
   const items = sorted.map(chartItem);
   ctx.openReplay(items[sorted.indexOf(s)], items, { apiJson: ctx.apiJson, fmt: { money: ctx.fmt.money, price: ctx.fmt.price, dateTime: ctx.fmt.dateTime, duration: () => '' } });
+}
+
+// ---- forming now: the open 4h candle, as if it closed at the current price ----
+let forming = null, formBusy = false;
+async function checkForming(force = false) {
+  const start = Math.floor(Date.now() / H4) * H4;
+  if (formBusy || (!force && forming && forming.start === start && Date.now() - forming.at < 55_000)) { paintForming(); return; }
+  formBusy = true;
+  $('#sfpFormLive').classList.add('busy');
+  const symbols = symbolsOf(settings.pairs), errors = [];
+  const from = start - (settings.lookbackDays + Math.max(settings.rangeDays || 0, 7) + 5) * DAY;
+  try {
+    const hits = await pool(symbols, 4, async symbol => {
+      try {
+        const history = (await candlesFor(symbol, from)).filter(c => c.t >= from && c.t < start);
+        const qs = new URLSearchParams({ category: 'linear', symbol, interval: '240', start, end: Date.now() });
+        const now = (await ctx.apiJson('/api/klines?' + qs)).candles.find(c => c.t === start);
+        if (!now) return [];
+        return signalsIf(history, now, settings).map(sg => ({ ...sg, ...holdLine(sg), symbol }));
+      } catch (e) { errors.push(symbol); return []; }
+    });
+    forming = { start, at: Date.now(), setups: hits.flat().sort((a, b) => a.inside - b.inside), errors, settings: { ...settings } };
+  } finally { formBusy = false; $('#sfpFormLive').classList.remove('busy'); }
+  paintForming();
+}
+
+function paintForming() {
+  const box = $('#sfpForming');
+  if (!forming) { box.replaceChildren(el('p', 'muted small', 'Checking the open 4h candle…')); return; }
+  const ago = Math.round((Date.now() - forming.at) / 1000);
+  const head = el('p', 'muted small', `${forming.setups.length ? `${forming.setups.length} pair${forming.setups.length === 1 ? '' : 's'} would signal` : 'No pair would signal'} if the candle closed now · checked ${ago < 10 ? 'just now' : ago < 60 ? `${ago}s ago` : `${Math.round(ago / 60)} min ago`}` +
+    (forming.errors.length ? ` · couldn't read ${forming.errors.join(', ')}` : ''));
+  if (!forming.setups.length) { box.replaceChildren(head); return; }
+  const list = el('ul', 'sfp-latest-list');
+  for (const s of forming.setups) {
+    const short = s.side === 'Short';
+    const li = el('li'), b = el('button', 'recap-trade'); b.type = 'button';
+    b.append(el('span', 'rt-name', `${s.symbol.replace(/USDT$/, '')} ${short ? 'short ▼' : 'long ▲'}`), el('span', 'rt-pnl ' + (s.inside < 0.003 ? 'neg' : ''), `${(s.inside * 100).toFixed(2)}% inside`));
+    b.append(el('span', 'rt-meta muted small', `Swept ${s.levels.map(l => ctx.fmt.price(l.price)).join(', ')} · now ${ctx.fmt.price(s.close)} · needs a close ${short ? 'at or below' : 'at or above'} ${ctx.fmt.price(s.line)}`));
+    b.title = 'Open on the chart';
+    b.onclick = () => showOnChart(s, forming.setups);
+    li.append(b); list.append(li);
+  }
+  box.replaceChildren(head, list);
 }
 
 function paintNextClose() {
   const next = Math.ceil((Date.now() + 1) / H4) * H4, left = next - Date.now();
   const h = Math.floor(left / 3_600_000), m = Math.floor((left % 3_600_000) / 60_000), sec = Math.floor((left % 60_000) / 1000);
   $('#sfpNextClose').textContent = `Next 4h close in ${h}:${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}`;
+  $('#sfpFormClose').textContent = `closes in ${h}:${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}`;
+  if (forming && !formBusy && next - H4 !== forming.start) checkForming();           // a new candle opened
 }

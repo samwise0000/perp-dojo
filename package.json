@@ -10,9 +10,15 @@
   "scripts": {
     "start": "node --env-file-if-exists=.env server.mjs",
     "test": "PERP_DATA_DIR=${TMPDIR:-/tmp}/perp-report-test node --test test/*.test.mjs",
-    "mock": "node test/mock-bybit.mjs"
+    "mock": "node test/mock-bybit.mjs",
+    "telegram": "node --env-file-if-exists=.env scripts/telegram.mjs",
+    "alerts": "node --env-file-if-exists=.env scripts/alerts.mjs",
+    "alerts:on": "node scripts/alerts-mac.mjs on",
+    "alerts:off": "node scripts/alerts-mac.mjs off",
+    "alerts:status": "node scripts/alerts-mac.mjs status"
   },
   "dependencies": {
+    "@resvg/resvg-js": "^2.6.2",
     "@vercel/blob": "^2.6.1"
   }
 }

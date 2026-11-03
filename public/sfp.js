@@ -8,7 +8,7 @@
 //      It's confirmed once those `right` candles have closed.
 //   2. Level: a line at that body top, live for `lookbackDays` after the swing.
 //   3. Sweep: a later candle's wick goes above the line (it needn't pass the
-//      swing candle's own wick).
+//      swing candle's own wick), by at least `minSweep` (a share of the price).
 //   4. Failure: that candle closes at or below the line. That close is the signal.
 //      Only levels whose swing candle is at least `minAge` candles back can be
 //      tested, so a signal is a test of an established range, not a fresh wiggle.
@@ -24,7 +24,18 @@
 //   failing doesn't count over and over.
 
 export const H4 = 4 * 3_600_000;
-export const SFP_DEFAULTS = { left: 3, right: 3, minAge: 12, lookbackDays: 30, breakOnClose: true, once: true, edge: 0.25, rangeDays: 7, outermost: false };
+export const SFP_DEFAULTS = { left: 3, right: 3, minAge: 12, lookbackDays: 30, breakOnClose: true, once: true, edge: 0.25, rangeDays: 7, outermost: false, minSweep: 0 };
+// Your Bybit watchlist (USDT perps; Bybit lists BONK and PEPE as 1000BONK and 1000PEPE).
+export const DEFAULT_PAIRS = 'ETH SOL 1000BONK WIF 1000PEPE FARTCOIN USELESS BRETT CASHCAT TRUMP PONS DOGE STRK JUP PENDLE UNI ALGO WLD AAVE AERO ZK VVV HYPE MNT ARB ' +
+  'ZETA PUMPFUN LINK NEAR ETHFI ZEC TAO SUI BARD LIT AVAX MEGA OPG SLX XMR ZRO ENA ADA AKE XRP XPL LINEA ONDO GWEI SKR 0G';
+// The first list, kept so saved scanner settings still on it move to the new one.
+export const OLD_DEFAULT_PAIRS = 'VVV HYPE STRK AAVE AERO JUP UNI ALGO LINK NEAR ETHFI ZEC SUI LIT AVAX WLD ONDO PENDLE ENA ZK MNT';
+// Presets for how hard to filter. Balanced is the scanner's default (it tested
+// best over 90 days) and what the alerts use.
+export const PRESETS = {
+  balanced: { minAge: 10, edge: 0.35, neutralBand: 0.01, smtRef: 'any', minSweep: 0.002 },
+  strict: { minAge: 12, edge: 0.25, neutralBand: 0, smtRef: 32, minSweep: 0.002 },
+};
 
 const top = c => Math.max(c.o, c.c), bottom = c => Math.min(c.o, c.c);
 
@@ -83,12 +94,13 @@ export function detect(candles, opts = {}) {
     for (const l of live) {
       if (k - l.i < o.minAge) continue;            // too young to count as a test
       const pos = posIn(l.price);
-      if (l.kind === 'high' && c.h > l.price && c.c <= l.price) {
+      // a wick that barely pokes past the level (under minSweep, a share of the price) isn't a sweep
+      if (l.kind === 'high' && c.h > l.price * (1 + o.minSweep) && c.c <= l.price) {
         if (o.edge && (pos === null || pos < 1 - o.edge)) continue;    // mid-range
         if (o.outermost && l.price < topHigh) continue;               // a bigger level is still above
         hit.high.push(l);
       }
-      if (l.kind === 'low' && c.l < l.price && c.c >= l.price) {
+      if (l.kind === 'low' && c.l < l.price * (1 - o.minSweep) && c.c >= l.price) {
         if (o.edge && (pos === null || pos > o.edge)) continue;
         if (o.outermost && l.price > bottomLow) continue;
         hit.low.push(l);
@@ -107,6 +119,7 @@ export function detect(candles, opts = {}) {
         // how far the wick went past the nearest level it failed at
         sweepPct: short ? (c.h - deepest) / deepest : (deepest - c.l) / deepest,
         ...outcome(candles, k, short),
+        trade: tradePlan(candles, k, short, levels, all),
       });
       for (const l of levels) l.hits++;
     }
@@ -120,6 +133,39 @@ export function detect(candles, opts = {}) {
   return { signals, live, levels, swings: all };
 }
 
+// The trade, for a short (mirrored for a long):
+//   entry  the signal candle's close
+//   stop   the signal candle's wick high
+//   target the opposing level: the lowest swing-low body between the swept
+//          swing (the oldest one, if several) and the signal candle, i.e. where
+//          the move into the sweep started. Only swings confirmed by the signal's
+//          close count, so the target is known at entry.
+// Then it walks the later candles: the stop or the target, whichever is hit
+// first. A candle that touches both counts as the stop (we can't see inside it).
+// null when there's no opposing level beyond the entry.
+export function tradePlan(candles, k, short, levels, swingList) {
+  const c = candles[k], entry = c.c, sl = short ? c.h : c.l;
+  const risk = Math.abs(sl - entry);
+  if (!risk) return null;
+  const from = Math.min(...levels.map(l => l.i));
+  const opp = swingList.filter(s => s.kind === (short ? 'low' : 'high') && s.i > from && s.i < k && s.confirmedAt <= k);
+  if (!opp.length) return null;
+  const target = opp.reduce((a, b) => (short ? (b.price < a.price ? b : a) : (b.price > a.price ? b : a)));
+  const tp = target.price;
+  if (short ? tp >= entry : tp <= entry) return null;
+  const rr = Math.abs(entry - tp) / risk;
+  const plan = { entry, sl, tp, tpT: target.t, rr, riskPct: risk / entry, result: 'open', R: null, exitT: null };
+  for (let j = k + 1; j < candles.length; j++) {
+    const x = candles[j];
+    const stopped = short ? x.h >= sl : x.l <= sl, hit = short ? x.l <= tp : x.h >= tp;
+    if (stopped) return { ...plan, result: 'loss', R: -1, exitT: x.t };
+    if (hit) return { ...plan, result: 'win', R: rr, exitT: x.t };
+  }
+  // still open: where it stands at the last close, in R
+  const last = candles.at(-1);
+  return { ...plan, R: k < candles.length - 1 ? (short ? entry - last.c : last.c - entry) / risk : 0 };
+}
+
 // What price did next: the move in your favor after 1, 3 and 6 candles, and
 // the best and worst points over those 6 candles (24 hours on 4h).
 function outcome(candles, k, short) {
@@ -131,6 +177,33 @@ function outcome(candles, k, short) {
     best24h: after.length ? Math.max(...after.map(c => move(short ? c.l : c.h))) : null,
     worst24h: after.length ? Math.min(...after.map(c => move(short ? c.h : c.l))) : null,
   };
+}
+
+// ---- a candle that hasn't closed yet ----
+
+export const M5 = 5 * 60_000;
+// The 4h candle starting at `t` as it stood at `cut`, built from its 5m candles
+// (any that closed by then). null when none had.
+export function candleAt(parts, t, cut, ms = M5) {
+  const in4h = parts.filter(c => c.t >= t && c.t < t + H4 && c.t + ms <= cut).sort((a, b) => a.t - b.t);
+  if (!in4h.length || in4h[0].t !== t) return null;
+  return { t, o: in4h[0].o, h: Math.max(...in4h.map(c => c.h)), l: Math.min(...in4h.map(c => c.l)), c: in4h.at(-1).c };
+}
+
+// The SFPs `candle` makes if it closes as it is, after the closed `history`
+// (4h candles, oldest first, ending right before it).
+export function signalsIf(history, candle, opts = {}) {
+  const cs = [...history.filter(c => c.t < candle.t), candle];
+  return detect(cs, opts).signals.filter(s => s.k === cs.length - 1);
+}
+
+// The price a signal's close must stay on the right side of: the outermost
+// level it failed at (a short still signals while it closes at or below its
+// highest swept level), and how far inside that the price is now.
+export function holdLine(sig) {
+  const short = sig.side === 'Short';
+  const line = short ? Math.max(...sig.levels.map(l => l.price)) : Math.min(...sig.levels.map(l => l.price));
+  return { line, inside: short ? (line - sig.close) / line : (sig.close - line) / line };
 }
 
 // ---- BTC filter: trend on 4h, SMT on 15m ----
@@ -155,6 +228,19 @@ export function trendMap(btc, n = 50) {
   const e = ema(btc.map(c => c.c), n), out = new Map();
   for (let i = n; i < btc.length; i++) out.set(btc[i].t, { up: btc[i].c > e[i], close: btc[i].c, ema: e[i] });
   return out;
+}
+
+// The settings the Telegram alerts and the Signals tab use: the Balanced preset.
+export const ALERT_SETTINGS = { ...SFP_DEFAULTS, ...BTC_DEFAULTS, ...PRESETS.balanced };
+
+// How a signal sits against BTC's 4h trend, as the alerts report it: from the
+// last 4h candle closed before the signal candle (the heads-up can't know the
+// signal candle's own close). 'aligned', 'counter', 'neutral', or null if unknown.
+export function btcSide(sig, trends, band = 0) {
+  const tr = trends.get(sig.t - H4);
+  if (!tr) return null;
+  if (Math.abs(tr.close - tr.ema) / tr.ema < band) return 'neutral';
+  return (sig.side === 'Long') === tr.up ? 'aligned' : 'counter';
 }
 
 // A signal is counter-trend when it goes against BTC: a long while BTC is down,

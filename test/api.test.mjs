@@ -9,14 +9,15 @@ import path from 'node:path';
 import { startMock, MOCK_KEY, MOCK_SECRET } from './mock-bybit.mjs';
 
 const PORT = 8097, BASE = `http://localhost:${PORT}`, PW = 'correct horse';
-let mock, app, dir;
+let mock, app, dir, sent;
 
 before(async () => {
-  mock = (await startMock({ port: 9996 })).server;
+  ({ server: mock, telegram: sent } = await startMock({ port: 9996 }));
   dir = await fs.mkdtemp(path.join(os.tmpdir(), 'perp-api-'));
   app = spawn(process.execPath, ['server.mjs'], {
     env: { ...process.env, PORT: String(PORT), PERP_DATA_DIR: dir, PERP_PASSWORD: PW, BLOB_READ_WRITE_TOKEN: '',
-      BYBIT_API_KEY: MOCK_KEY, BYBIT_API_SECRET: MOCK_SECRET, BYBIT_BASE_URL: 'http://127.0.0.1:9996' },
+      BYBIT_API_KEY: MOCK_KEY, BYBIT_API_SECRET: MOCK_SECRET, BYBIT_BASE_URL: 'http://127.0.0.1:9996',
+      ALERT_SECRET: 'alert-secret', TELEGRAM_BOT_TOKEN: 'bot-token', TELEGRAM_CHAT_ID: '42', TELEGRAM_API_BASE: 'http://127.0.0.1:9996', SFP_PAIRS: 'BTC SOL' },
     stdio: 'ignore',
   });
   for (let i = 0; i < 50; i++) { try { await fetch(BASE + '/'); break; } catch { await new Promise(r => setTimeout(r, 100)); } }
@@ -76,4 +77,27 @@ test('positions: open ones only, with stop-loss risk and open time', async () =>
   const sol = j.positions.find(p => p.symbol === 'SOLUSDT');
   assert.equal(sol.sl, null);
   assert.equal(sol.dir, 'Short');
+});
+
+test('sfp-alert: needs the alert secret, sends through Telegram, dry runs send nothing', async () => {
+  assert.equal((await fetch(`${BASE}/api/sfp-alert?phase=pre`)).status, 401);
+  assert.equal((await fetch(`${BASE}/api/sfp-alert?phase=pre&key=nope`)).status, 401);
+  assert.equal((await fetch(`${BASE}/api/sfp-alert?phase=soon&key=alert-secret`)).status, 400);
+
+  const test = await fetch(`${BASE}/api/sfp-alert?phase=test`, { headers: { authorization: 'Bearer alert-secret' } });
+  assert.equal(test.status, 200);
+  assert.equal(sent.length, 1);
+  assert.equal(sent[0].token, 'bot-token');
+  assert.equal(sent[0].chat_id, '42');
+  assert.equal(sent[0].parse_mode, 'HTML');
+
+  for (const phase of ['pre', 'close']) {
+    const r = await fetch(`${BASE}/api/sfp-alert?phase=${phase}&dry=1&key=alert-secret`);
+    assert.equal(r.status, 200);
+    const j = await r.json();
+    assert.equal(j.sent, false);
+    assert.deepEqual(j.errors, []);
+    assert.ok(Array.isArray(j.setups));
+  }
+  assert.equal(sent.length, 1);
 });
