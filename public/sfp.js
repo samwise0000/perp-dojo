@@ -323,27 +323,42 @@ export function smt(sig, alt, btc, { ref = 32, ms = H4, type = 'strength' } = {}
 
 // A letter grade for a setup, from what held up in the 1-year backtest
 // (54 pairs, wick stop, opposing-level target, fees; avg R per trade):
-//   A+  with yesterday's NY bias, outside the NY session, BTC swept the same way   +1.04R
-//   A   with the bias outside the session, or with it + BTC sweep in the session   +0.41R
-//   B+  a B whose 4h RSI is stretched the trade's way (long < 40, short > 60)       +0.73R with adds
+//   A++ with yesterday's NY bias, outside the NY session, BTC swept the same way   +3.24R main closes Mon–Thu (19, thin)
+//   A+  the same but no BTC sweep, and the 4h RSI stretched the trade's way          +2.70R (229)
+//   A   with the bias outside the session (neither), or with it + BTC sweep in the   +1.10R (122)
+//       session (at 00:00 that's the 🌙 Midnight sweep)
+//   A++ also: NY session open, 4h RSI stretched (🌃 Late A++, 00:00 / 04:00)       +1.6R (~135)
+//   B+  that, when it also fades a 2%+ NY session (🌊 NY fade)                       +2.29R (32, 8 days)
 //   B   with the bias but during the NY session (the bias may be going stale)       +0.02R
+//   C++  a C that fades a 2%+ NY session at its last close (see nyFadeAt)            tracking only
 //   C   against the bias, or no bias known                                         −0.13R
 // ny: { bias: 'bullish'|'bearish'|'flat'|null, during: bool }; swept: BTC's own SFP, same side, same candle;
-// rsi: the pair's 4h RSI(14) at the signal close (see rsi()), optional.
+// rsi: the pair's 4h RSI(14) at the signal close (see rsi()), optional; fade: the setup fades
+// a violent NY session at its last close (fadesNy in bias.js), optional.
 export const BPLUS_RSI = 40;
 export const rsiStretched = (side, r) => r != null && Number.isFinite(r) && (side === 'Short' ? r > 100 - BPLUS_RSI : r < BPLUS_RSI);
-export function gradeSetup(side, { ny, swept = false, rsi = null } = {}) {
+export function gradeSetup(side, { ny, swept = false, rsi = null, fade = false } = {}) {
   const dir = side === 'Short' ? 'bearish' : 'bullish';
   const mark = ny?.bias === 'bullish' ? '▲' : ny?.bias === 'bearish' ? '▼' : '';
-  if (!ny?.bias || ny.bias === 'flat') return { grade: 'C', why: 'no NY bias to go with' };
-  if (ny.bias !== dir) return { grade: 'C', why: `against the NY bias ${mark}` };
+  const nf = ', but fades a 2%+ NY session at its last close (NY fade)';
+  if (!ny?.bias || ny.bias === 'flat') return fade ? { grade: 'C++', why: 'no NY bias to go with' + nf } : { grade: 'C', why: 'no NY bias to go with' };
+  if (ny.bias !== dir) return fade ? { grade: 'C++', why: `against the NY bias ${mark}${nf}` } : { grade: 'C', why: `against the NY bias ${mark}` };
   const sw = swept ? ', BTC swept too' : '';
-  if (!ny.during) return { grade: swept ? 'A+' : 'A', why: `with the NY bias ${mark}${sw}` };
-  if (swept) return { grade: 'A', why: `with the NY bias ${mark}${sw}, NY session open` };
-  if (rsiStretched(side, rsi)) return { grade: 'B+', why: `with the NY bias ${mark}, NY session open, 4h RSI ${Math.round(rsi)} (stretched)` };
+  if (!ny.during) {
+    if (swept) return { grade: 'A++', why: `with the NY bias ${mark}${sw}` };
+    if (rsiStretched(side, rsi)) return { grade: 'A+', why: `with the NY bias ${mark}, 4h RSI ${Math.round(rsi)} (stretched)` };
+    return { grade: 'A', why: `with the NY bias ${mark}` };
+  }
+  // tagged: at the 00:00 close (Mon–Thu) this is the 🌙 Midnight sweep, taken at tracking size (proposedRisk)
+  if (swept) return { grade: 'A', why: `with the NY bias ${mark}${sw}, NY session open`, tag: 'midnight' };
+  // NY open with a stretched RSI: an A++ in its own right at the late closes (🌃 Late A++), or,
+  // when it also fades a violent NY session, the 🌊 NY fade, tracked on its own
+  if (rsiStretched(side, rsi)) return fade
+    ? { grade: 'B+', why: `with the NY bias ${mark}, NY session open, 4h RSI ${Math.round(rsi)} (stretched), and fades a 2%+ NY session (🌊 NY fade)`, tag: 'fade' }
+    : { grade: 'A++', why: `with the NY bias ${mark}, NY session open, 4h RSI ${Math.round(rsi)} (stretched): 🌃 Late A++`, tag: 'late' };
   return { grade: 'B', why: `with the NY bias ${mark}, but the NY session is open` };
 }
-export const GRADE_ORDER = ['A+', 'A', 'B+', 'B', 'C'];
+export const GRADE_ORDER = ['A++', 'A+', 'A', 'B+', 'B', 'C++', 'C'];
 
 // Wilder's RSI over `n` candles (as TradingView draws it): one value per candle, null until there are n changes.
 export function rsi(candles, n = 14) {
@@ -357,7 +372,7 @@ export function rsi(candles, n = 14) {
   return out;
 }
 
-// The scaling plan for a trade, as backtested on A and A+ setups:
+// The scaling plan for a trade, as backtested on A-grade setups:
 //   add 1 at +1R (same size as the entry); all stops → the entry
 //   add 2 at +2R (half size, so it also risks 1R to the entry); all stops → the
 //     whole position's break-even (its average entry, plus ~0.15% for fees)

@@ -23,6 +23,7 @@
       <button type="button" data-view="review"><svg viewBox="0 0 16 16" aria-hidden="true"><rect x="1.5" y="2.5" width="13" height="12" rx="2"/><path d="M1.5 6.5h13M5 1v3M11 1v3M4.5 11l2 1.5 4-4"/></svg>Weekly review</button>
       <button type="button" data-view="reports"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 1.5h5.5L13 5v9.5H4z"/><path d="M9.5 1.5V5H13M6.5 8.5h4M6.5 11h4"/></svg>Reports</button>
       <button type="button" data-view="strategy"><svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6.5"/><circle cx="8" cy="8" r="3.5"/><circle cx="8" cy="8" r="0.6"/></svg>Strategy</button>
+      <button type="button" data-view="forward"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M1.5 13.5h13"/><path d="M2.5 11 6 7.5l2.5 2L13.5 4"/><path d="M10.5 4h3v3"/></svg>Forward test <span class="nav-beta">beta</span></button>
       <button type="button" data-view="playbook"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 2.5h4.5a1.5 1.5 0 0 1 1.5 1.5v9.5a1 1 0 0 0-1-1h-5z"/><path d="M13.5 2.5H9A1.5 1.5 0 0 0 7.5 4v9.5a1 1 0 0 1 1-1h5z"/></svg>Playbook</button>
       <button type="button" data-view="wizard"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 4.5 4 6l2.5-3M2.5 10.5 4 12l2.5-3M8.5 4.5h5M8.5 10.5h5"/></svg>Entry wizard</button>
       <button type="button" data-view="trades"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2 3.5h12M2 8h12M2 12.5h12"/></svg>Trades</button>
@@ -374,7 +375,7 @@
           <div class="card-row">
             <div>
               <h2>The six 4h closes</h2>
-              <p class="sub">What the signals did at each close over the last year (A and A+ setups, single entry, after fees), what you can expect from them, and how your own trades opened at each close went.</p>
+              <p class="sub">What the signals did at each close over the last year (A-grade setups, single entry, after fees), what you can expect from them, and how your own trades opened at each close went.</p>
             </div>
           </div>
           <div id="closeBreakdown"><p class="muted small">Loading a year of signals…</p></div>
@@ -595,6 +596,9 @@
           </div>
         </div>
       </section>
+
+      <!-- ===================== FORWARD TEST ===================== -->
+      <section id="view-forward" class="grid" hidden></section>
 
       <!-- ===================== STRATEGY ===================== -->
       <section id="view-strategy" class="grid st-page" hidden></section>

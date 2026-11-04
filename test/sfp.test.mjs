@@ -219,21 +219,34 @@ test('the scaling plan: adds at +1R and +2R, stops stepped up behind them', asyn
 test('proposed risk: by grade, half on a weak close, none outside the trading day', async () => {
   const { proposedRisk } = await import('../public/day-playbook.js');
   const at = (d, h) => new Date(2026, 10, 1 + d, h).getTime();      // Nov 2 2026 is a Monday (local time)
-  assert.equal(proposedRisk('A+', at(1, 8)).pct, 2);                  // Monday 08:00, prime
+  assert.equal(proposedRisk('A++', at(1, 8)).pct, 2);                 // Monday 08:00, prime
+  assert.equal(proposedRisk('A+', at(1, 8)).pct, 1);
+  assert.equal(proposedRisk('A+', at(1, 20)).pct, 0);                  // the RSI A+ isn't taken at the late closes
   assert.equal(proposedRisk('A', at(1, 12)).pct, 1);
   assert.equal(proposedRisk('A', at(4, 16)).pct, 0.5);                 // Thursday 16:00 is weak: half
-  assert.equal(proposedRisk('A', at(5, 8)).pct, 0.5);                  // Friday: half
+  assert.equal(proposedRisk('A', at(5, 8)).pct, 0);                    // Friday: no new trades
+  assert.equal(proposedRisk('A++', at(6, 12)).pct, 0);                 // nor Saturday
+  assert.match(proposedRisk('A', at(0, 16)).why, /weekend/);
   assert.equal(proposedRisk('A', at(1, 20)).pct, 0);                   // outside the trading day
-  assert.equal(proposedRisk('A+', at(1, 20)).pct, 0.25);               // ...except A+, Mon–Thu, at a quarter percent
-  assert.equal(proposedRisk('A+', at(4, 4)).pct, 0.25);
-  assert.equal(proposedRisk('A+', at(5, 0)).pct, 0);                   // not on Friday
-  assert.equal(proposedRisk('A+', at(1, 21)).pct, 0);                  // not between closes
+  assert.equal(proposedRisk('A++', at(1, 20)).pct, 0);                 // not even A++ at the late closes
+  assert.equal(proposedRisk('A++', at(4, 4)).pct, 0);
+  assert.equal(proposedRisk('A++', at(5, 0)).pct, 0);                  // not on Friday
+  assert.equal(proposedRisk('A++', at(1, 21)).pct, 0);                 // not between closes
   assert.equal(proposedRisk('B', at(5, 8)).pct, 0);                    // B on a weak close: skip
   assert.equal(proposedRisk('B+', at(2, 0)).pct, 0.25);               // B+ at 00:00 / 04:00, Mon–Thu
+  assert.equal(proposedRisk('A++', at(2, 0), { tag: 'late' }).pct, 0.5);    // 🌃 Late A++
+  assert.equal(proposedRisk('A++', at(1, 20), { tag: 'late' }).pct, 0);     // not at 20:00
+  assert.equal(proposedRisk('A++', at(2, 0)).pct, 0);                  // the main-close A++ is a skip late
   assert.equal(proposedRisk('B+', at(4, 4)).pct, 0.25);
   assert.equal(proposedRisk('B+', at(1, 20)).pct, 0);                  // ...not at 20:00
   assert.equal(proposedRisk('B+', at(5, 0)).pct, 0);                   // ...not on Friday
   assert.equal(proposedRisk('B', at(2, 0)).pct, 0);                    // plain B: never
+  assert.equal(proposedRisk('A', at(2, 0), { tag: 'midnight' }).pct, 0.25);   // 🌙 Midnight sweep: Tue 00:00
+  assert.match(proposedRisk('A', at(2, 0), { tag: 'midnight' }).why, /Midnight sweep/);
+  assert.equal(proposedRisk('A', at(2, 0)).pct, 0);                    // an A at 00:00 without BTC's sweep: no
+  assert.equal(proposedRisk('A', at(2, 4), { tag: 'midnight' }).pct, 0);      // only at 00:00
+  assert.equal(proposedRisk('A', at(5, 0), { tag: 'midnight' }).pct, 0);      // not on Friday
+  assert.equal(proposedRisk('A', at(1, 8), { tag: 'midnight' }).pct, 1);      // at a main close it's just an A
   assert.equal(proposedRisk('C', at(1, 8)).pct, 0);
 });
 
@@ -293,3 +306,39 @@ test('RSI (Wilder, 14) and the B+ stretch', async () => {
   assert.ok(rsiStretched('Long', 39) && !rsiStretched('Long', 41) && rsiStretched('Short', 61) && !rsiStretched('Short', 59));
   assert.ok(!rsiStretched('Long', null));
 });
+
+test('forward test: positions, matching to signals, R by the signal stop', async () => {
+  const { positionsFrom, entryOrders, matchSignal, forwardReport } = await import('../public/forward.js');
+  const H4 = 4 * 3_600_000, T0 = Date.UTC(2026, 10, 3, 0);              // signal candle start; it closes at T0 + 4h
+  const close = T0 + H4;
+  const trades = [                                                        // one long closed in two parts, one unrelated short
+    { category: 'linear', symbol: 'HYPEUSDT', dir: 'Long', openedAt: close + 60_000, time: close + 5 * H4, pnl: 30, fees: 1, size: 10 },
+    { category: 'linear', symbol: 'HYPEUSDT', dir: 'Long', openedAt: close + 60_000, time: close + 6 * H4, pnl: 50, fees: 1, size: 15 },
+    { category: 'linear', symbol: 'SUIUSDT', dir: 'Short', openedAt: close + 3 * H4, time: close + 4 * H4, pnl: -12, fees: 1, size: 100 },
+    { category: 'linear', symbol: 'ZECUSDT', dir: 'Long', openedAt: null, time: close, pnl: 5, fees: 0, size: 1 },   // open time unknown: skipped
+  ];
+  const ps = positionsFrom(trades);
+  assert.equal(ps.length, 2);
+  assert.equal(ps[0].pnl, 80); assert.equal(ps[0].parts, 2); assert.equal(ps[0].size, 25);
+  const execs = {
+    a: { c: 'linear', s: 'HYPEUSDT', side: 'Buy', q: 6, cs: 0, t: close + 60_000, o: 'o1' },
+    b: { c: 'linear', s: 'HYPEUSDT', side: 'Buy', q: 4, cs: 0, t: close + 61_000, o: 'o1' },          // same first order, second fill
+    c: { c: 'linear', s: 'HYPEUSDT', side: 'Buy', q: 10, cs: 0, t: close + H4, o: 'o2' },             // add 1
+    d: { c: 'linear', s: 'HYPEUSDT', side: 'Buy', q: 5, cs: 0, t: close + 2 * H4, o: 'o3' },          // add 2
+    e: { c: 'linear', s: 'HYPEUSDT', side: 'Sell', q: 10, cs: 10, t: close + 5 * H4, o: 'o4' },       // a close, not an add
+  };
+  assert.deepEqual(entryOrders(ps[0], execs), { first: 10, adds: 2 });
+  const sig = { symbol: 'HYPEUSDT', side: 'Long', t: T0, grade: { grade: 'A' }, trade: { entry: 40, sl: 39, tp: 46, rr: 6, scaled: { net: 12.5 } } };
+  const early = { ...sig, t: T0 - 2 * H4 };
+  assert.equal(matchSignal(ps[0], [early, sig]), sig);
+  assert.equal(matchSignal(ps[1], [sig]), null);                          // different pair
+  assert.equal(matchSignal({ ...ps[0], openedAt: close + H4 + 1 }, [sig]), null);   // opened after the next candle
+  // Tue 08:00 local is a main close only in some time zones, so use whatever this machine's proposedRisk says
+  const rep = forwardReport({ trades, execs, signals: [sig], start: close - DAY_MS() });
+  const hype = rep.rows.find(r => r.symbol === 'HYPEUSDT');
+  assert.equal(hype.R, 8);                                                // 80 ÷ (10 × 1)
+  assert.equal(hype.plan, 12.5);
+  assert.equal(hype.adds, 2);
+  assert.equal(rep.rows.find(r => r.symbol === 'SUIUSDT').sig, null);
+});
+function DAY_MS() { return 864e5; }

@@ -125,21 +125,32 @@ test('each setup gets a grade with the reason', async () => {
   const { preMessage, closeMessage } = await import('../lib/sfp-alert.mjs');
   const { gradeSetup } = await import('../public/sfp.js');
   const bear = { bias: 'bearish', during: false };
-  assert.equal(gradeSetup('Short', { ny: bear, swept: true }).grade, 'A+');
+  assert.equal(gradeSetup('Short', { ny: bear, swept: true }).grade, 'A++');
+  assert.equal(gradeSetup('Short', { ny: bear, rsi: 66 }).grade, 'A+');                       // stretched, no sweep
+  assert.equal(gradeSetup('Long', { ny: { bias: 'bullish', during: false }, rsi: 35 }).grade, 'A+');
+  assert.equal(gradeSetup('Short', { ny: bear, rsi: 55 }).grade, 'A');                        // not stretched
+  assert.equal(gradeSetup('Short', { ny: bear, swept: true, rsi: 70 }).grade, 'A++');         // the sweep outranks RSI
   assert.equal(gradeSetup('Short', { ny: bear }).grade, 'A');
   assert.equal(gradeSetup('Short', { ny: { ...bear, during: true }, swept: true }).grade, 'A');
+  assert.equal(gradeSetup('Short', { ny: { ...bear, during: true }, swept: true }).tag, 'midnight');
+  assert.equal(gradeSetup('Short', { ny: bear }).tag, undefined);
   assert.equal(gradeSetup('Short', { ny: { ...bear, during: true } }).grade, 'B');
-  assert.equal(gradeSetup('Short', { ny: { ...bear, during: true }, rsi: 64 }).grade, 'B+');   // stretched the short's way
+  assert.equal(gradeSetup('Short', { ny: { ...bear, during: true }, rsi: 64 }).grade, 'A++');  // NY open + stretched: 🌃 Late A++
+  assert.equal(gradeSetup('Short', { ny: { ...bear, during: true }, rsi: 64 }).tag, 'late');
   assert.equal(gradeSetup('Short', { ny: { ...bear, during: true }, rsi: 36 }).grade, 'B');    // stretched the wrong way
-  assert.equal(gradeSetup('Long', { ny: { bias: 'bullish', during: true }, rsi: 33 }).grade, 'B+');
-  assert.equal(gradeSetup('Short', { ny: bear, rsi: 80 }).grade, 'A');                         // RSI only lifts B
+  assert.equal(gradeSetup('Long', { ny: { bias: 'bullish', during: true }, rsi: 33 }).grade, 'A++');
+  assert.equal(gradeSetup('Long', { ny: { bias: 'bullish', during: true }, rsi: 33, fade: true }).grade, 'B+');   // …unless it fades the session
+  assert.equal(gradeSetup('Short', { ny: bear, rsi: 80 }).grade, 'A+');                        // stretched lifts A too
+  assert.equal(gradeSetup('Long', { ny: bear, fade: true }).grade, 'C++');                      // a C fading a violent NY session
+  assert.equal(gradeSetup('Long', { fade: true }).grade, 'C++');
+  assert.equal(gradeSetup('Short', { ny: bear, fade: true }).grade, 'A');                       // the fade only lifts C
   assert.equal(gradeSetup('Long', { ny: bear, swept: true }).grade, 'C');
   assert.equal(gradeSetup('Long', {}).grade, 'C');
   const sig = (side, close = 100) => ({ side, close, line: 99, inside: 0.01, levels: [{ price: 99 }], range: {} });
   const w = { close: CLOSE };
   const res = [{ symbol: 'ONDOUSDT', pre: [sig('Short')], final: [sig('Short')], closed: { c: 100 } }, { symbol: 'AAVEUSDT', pre: [sig('Long', 50)], final: [], closed: { c: 50 } }];
   const pre = preMessage(res, w, { ny: bear, btcSweep: { pre: ['Short'] } });
-  assert.match(pre, /ONDO short<\/b>  100  ·  🏆 <b>A\+<\/b>\n/);
+  assert.match(pre, /ONDO short<\/b>  100  ·  🏆 <b>A\+\+<\/b>\n/);
   assert.match(pre, /BTC trend: unknown\n\n🟢 <b>AAVE long<\/b>  50  ·  🥉 <b>C<\/b>/);     // a blank line between setups
   assert.ok(pre.indexOf('ONDO') < pre.indexOf('AAVE'));                 // best grade first
   assert.match(closeMessage(res, w, { ny: { ...bear, during: true } }), /✅ <b>ONDO short<\/b>  100  ·  🥈 <b>B<\/b>\n/);
@@ -169,4 +180,77 @@ test('more than 2 takeable setups on one close: the 2 picks are marked', async (
   assert.match(closeMessage(res, w, { tz, ny: bear }), /✅ <b>HYPE short<\/b>  100  ·  🥇 <b>A<\/b>  ·  👉 <b>pick<\/b>/);
   const fri = Date.UTC(2026, 10, 6, 16);                                 // Sat 00:00 in UTC+8: nothing takeable at a late weekend close
   assert.equal(picksOf([a, b, c], ctx, fri, tz).n, 0);
+});
+
+test('NY fade note at the close in the last 2 hours of the NY session', async () => {
+  const { nyFadeAt, preMessage, closeMessage } = await import('../lib/sfp-alert.mjs');
+  const M15 = 15 * 60_000, start = Date.UTC(2026, 10, 3, 13);           // 8 AM New York (EST)
+  const path = (from, to, n = 28) => Array.from({ length: n }, (_, i) => { const a = from + (to - from) * i / n, b = from + (to - from) * (i + 1) / n; return { t: start + i * M15, o: a, c: b, h: Math.max(a, b) + 0.05, l: Math.min(a, b) - 0.05 }; });
+  const close = Date.UTC(2026, 10, 3, 20);                               // 3 PM New York: 2h left
+  const down = nyFadeAt(path(100, 97), close);
+  assert.equal(down.dir, 'down'); assert.ok(Math.abs(down.move + 0.03) < 0.002);
+  assert.equal(nyFadeAt(path(100, 97).slice(0, 12), Date.UTC(2026, 10, 3, 16)), null);   // mid-session close
+  assert.equal(nyFadeAt(path(100, 99), close), null);                    // only −1%
+  const bounced = [...path(100, 96, 20), ...path(96, 99, 8).map((c, i) => ({ ...c, t: start + (20 + i) * M15 }))];
+  assert.equal(nyFadeAt(bounced, close), null);                          // −1% but well off the low
+  assert.equal(nyFadeAt(path(100, 103), close).dir, 'up');
+  const sig = side => ({ side, close: 100, line: 99, inside: 0.01, levels: [{ price: 99 }], range: {}, trade: { entry: 100, sl: 99, tp: 104, rr: 4 } });
+  const w = { close };
+  const pre = preMessage([{ symbol: 'HYPEUSDT', pre: [sig('Long')] }, { symbol: 'SUIUSDT', pre: [sig('Short')] }], w, { fade: down });
+  assert.match(pre, /🌊 BTC −3\.0% in today’s NY session and closing near its low\. Longs here fade it/);
+  assert.match(pre, /HYPE long[^]*├ 🌊 NY fade\n├ 🛑/);
+  const bear = { bias: 'bearish', during: true };                        // a long here is a C: the fade makes it C++
+  assert.match(preMessage([{ symbol: 'HYPEUSDT', pre: [sig('Long')] }], w, { fade: down, ny: bear }), /HYPE long<\/b>  100  ·  🏅 <b>C\+\+<\/b>/);
+  assert.match(preMessage([{ symbol: 'HYPEUSDT', pre: [sig('Long')] }], w, { fade: down, ny: bear }), /├ 🎯 C\+\+ targets: 2R 102 · 3R 103\n/);   // entry 100, stop 99
+  assert.doesNotMatch(pre.split('SUI short')[1], /C\+\+ targets/);         // the short doesn't fade: no targets
+  assert.doesNotMatch(pre.split('SUI short')[1], /🌊/);
+  assert.doesNotMatch(preMessage([{ symbol: 'SUIUSDT', pre: [sig('Short')] }], w, { fade: down }), /🌊/);   // nothing fades it: no note
+  const fin = closeMessage([{ symbol: 'HYPEUSDT', pre: [sig('Long')], final: [sig('Long')], closed: { c: 100 } }], w, { fade: down });
+  assert.match(fin, /✅ <b>HYPE long[^]*├ 🌊 NY fade/);
+});
+
+test('🌙 Midnight sweep line at the 00:00 close', async () => {
+  const { preMessage } = await import('../lib/sfp-alert.mjs');
+  const tz = 'Asia/Makassar', bear = { bias: 'bearish', during: true };
+  const sig = { side: 'Short', close: 100, line: 101, inside: 0.01, levels: [{ price: 101 }], range: {}, trade: { entry: 100, sl: 102, tp: 94, rr: 3 } };
+  const msg = close => preMessage([{ symbol: 'HYPEUSDT', pre: [sig] }], { close }, { tz, ny: bear, btcSweep: { pre: ['Short'] } });
+  assert.match(msg(Date.UTC(2026, 10, 3, 16)), /🥇 <b>A<\/b>[^]*├ 🌙 Midnight sweep: BTC swept with it mid-NY session/);   // Wed 00:00 UTC+8
+  assert.doesNotMatch(msg(Date.UTC(2026, 10, 3, 20)), /Midnight sweep/);       // 04:00
+  assert.doesNotMatch(msg(Date.UTC(2026, 10, 6, 16)), /Midnight sweep/);       // Sat 00:00
+});
+
+test('⛔ a good grade at a close the plan skips', async () => {
+  const { preMessage } = await import('../lib/sfp-alert.mjs');
+  const tz = 'Asia/Makassar', bear = { bias: 'bearish', during: false };
+  const sig = { side: 'Short', close: 100, line: 101, inside: 0.01, levels: [{ price: 101 }], range: {}, trade: { entry: 100, sl: 102, tp: 94, rr: 3 } };
+  const msg = close => preMessage([{ symbol: 'HYPEUSDT', pre: [sig] }], { close }, { tz, ny: bear });
+  assert.match(msg(Date.UTC(2026, 10, 3, 12)), /🥇 <b>A<\/b>[^]*├ ⛔ Wrong time/);     // Tue 20:00 UTC+8: an A, skipped
+  assert.doesNotMatch(msg(Date.UTC(2026, 10, 3, 4)), /Wrong time/);                // Tue 12:00: a main close
+  assert.match(msg(Date.UTC(2026, 10, 6, 4)), /├ ⛔ Wrong time/);                   // Fri 12:00: weekend, no new trades
+  assert.doesNotMatch(preMessage([{ symbol: 'HYPEUSDT', pre: [{ ...sig, side: 'Long' }] }], { close: Date.UTC(2026, 10, 3, 12) }, { tz, ny: bear }), /Wrong time/);   // a C: no ⛔, it's just a C
+});
+
+test('🌊 NY fade: a B+ that also fades the NY session', async () => {
+  const { gradeSetup } = await import('../public/sfp.js');
+  const { setupName } = await import('../public/day-playbook.js');
+  const ny = { bias: 'bullish', during: true };
+  const g = gradeSetup('Long', { ny, rsi: 33, fade: true });
+  assert.equal(g.grade, 'B+'); assert.equal(g.tag, 'fade');
+  assert.equal(setupName(g.grade, Date.now(), g.tag), '🌊 NY fade');
+  assert.equal(gradeSetup('Long', { ny, rsi: 33 }).tag, 'late');               // no fade: 🌃 Late A++
+  assert.equal(gradeSetup('Long', { ny, rsi: 50, fade: true }).grade, 'B');     // a B that fades stays B
+  const { preMessage } = await import('../lib/sfp-alert.mjs');
+  const M15 = 15 * 60_000, start = Date.UTC(2026, 10, 3, 13), close = Date.UTC(2026, 10, 3, 20);
+  const fade = { dir: 'down', move: -0.03, pos: 0.05 };
+  const sig = { side: 'Long', close: 100, line: 99, inside: 0.01, levels: [{ price: 99 }], range: {}, rsi: 33, trade: { entry: 100, sl: 99, tp: 104, rr: 4 } };
+  assert.match(preMessage([{ symbol: 'HYPEUSDT', pre: [sig] }], { close }, { ny, fade, tz: 'Asia/Makassar' }), /🎖️ <b>B\+<\/b>[^]*├ 🌊 NY fade: a B\+ that also fades the NY session/);
+});
+
+test('🌃 Late A++ at 00:00 / 04:00 at 0.5%', async () => {
+  const { preMessage } = await import('../lib/sfp-alert.mjs');
+  const tz = 'Asia/Makassar', ny = { bias: 'bearish', during: true };
+  const sig = { side: 'Short', close: 100, line: 101, inside: 0.01, levels: [{ price: 101 }], range: {}, rsi: 66, trade: { entry: 100, sl: 102, tp: 94, rr: 3 } };
+  const msg = close => preMessage([{ symbol: 'HYPEUSDT', pre: [sig] }], { close }, { tz, ny });
+  assert.match(msg(Date.UTC(2026, 10, 3, 20)), /🏆 <b>A\+\+<\/b>[^]*├ 🌃 Late A\+\+: NY open, 4h RSI stretched \(0\.5%\)/);   // Wed 04:00
+  assert.match(msg(Date.UTC(2026, 10, 3, 12)), /├ ⛔ Wrong time/);                                                       // Tue 20:00
 });

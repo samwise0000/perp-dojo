@@ -96,3 +96,26 @@ export function nyBiasAt(sessions, t, hours = NY_HOURS.session, tz = NY_TZ) {
   const during = wd !== 0 && wd !== 6 && t >= zonedToUtc(y, m, d, oh, om, tz) && t < zonedToUtc(y, m, d, ch, cm, tz);
   return { bias, during };
 }
+
+// The NY fade: at the 4h close in the last 2 hours of the NY session (04:00 in
+// UTC+8), when BTC has moved 2%+ since the session opened and sits in the outer
+// 20% of the session's range, setups against that move are flagged. Backtest
+// (all grades, past year): +1.05R a trade over 32 days, positive in both halves
+// and without the best 3; the same fade at the mid-session close lost ~0.7R.
+// A C setup that fades it grades C++ (tracking only: no size).
+export const NY_FADE = { move: 0.02, edge: 0.2, hoursLeft: 2 };
+// BTC's NY session so far from 15m candles up to `close`: { dir: 'down'|'up', move, pos } or null when not a fade close.
+export function nyFadeAt(candles, close) {
+  const [y, m, d] = zonedDate(close - 1, NY_TZ);
+  const start = zonedToUtc(y, m, d, 8, 0, NY_TZ), end = zonedToUtc(y, m, d, 17, 0, NY_TZ);
+  if (close <= start || close > end || end - close > NY_FADE.hoursLeft * 3_600_000) return null;
+  const cs = candles.filter(c => c.t >= start && c.t < close);
+  if (cs.length < 4) return null;
+  const o = cs[0].o, last = cs.at(-1).c, hi = Math.max(...cs.map(c => c.h)), lo = Math.min(...cs.map(c => c.l));
+  const move = (last - o) / o, pos = hi > lo ? (last - lo) / (hi - lo) : 0.5;
+  if (Math.abs(move) < NY_FADE.move) return null;
+  if (move < 0 ? pos > NY_FADE.edge : pos < 1 - NY_FADE.edge) return null;
+  return { dir: move < 0 ? 'down' : 'up', move, pos };
+}
+// Does a setup on `side` fade that move? (a long after a drop, a short after a rally)
+export const fadesNy = (side, fade) => Boolean(fade) && (fade.dir === 'down' ? side === 'Long' : side === 'Short');

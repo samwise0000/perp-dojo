@@ -80,10 +80,10 @@ export function chartItem(s) {
   if (plan?.adds[1]) { const dec = (p(tr.entry).replace(/,/g, '').split('.')[1] || '').length, k = 10 ** dec; plan.adds[1].stop = (short ? Math.floor : Math.ceil)(plan.adds[1].stop * k) / k; }
   // the trade guide above the chart: plain-English steps, prices in **bold**
   const coin = s.symbol.replace(/USDT$/, ''), buy = short ? 'Short' : 'Buy', beyond = short ? 'above' : 'below', toward = short ? 'down' : 'up';
-  const lv = s.levels.map(l => `**${p(l.price)}**`).join(', ');
+  const lv = s.levels.map(l => `**${p(l.price)}**`).join(', '), cpp = s.grade?.grade === 'C++';
   const steps = [`The 4h candle that closed ${when(s.t)} wicked ${short ? 'above' : 'below'} ${s.levels.length > 1 ? 'the levels' : 'the level'} ${lv} and closed back ${short ? 'below' : 'above'}: a failed ${short ? 'breakout' : 'breakdown'}.`];
   // the proposed risk: % of equity by grade and close (day-playbook.js), and the size it means
-  const pr = s.grade && tr ? proposedRisk(s.grade.grade, s.t + H4) : null;
+  const pr = s.grade && tr ? proposedRisk(s.grade.grade, s.t + H4, { tag: s.grade.tag }) : null;
   const eq = ctx.equity?.(), hidden = ctx.balanceHidden?.();
   const usd = pr && eq ? eq * pr.pct / 100 : null;
   const qty = usd ? usd / Math.abs(tr.entry - tr.sl) : null;
@@ -95,10 +95,12 @@ export function chartItem(s) {
   if (tr) {
     steps.push(`${buy} ${coin} at the close: **${p(tr.entry)}**${pr?.pct ? sizeText(1) : ''}.`);
     steps.push(`Put your stop just ${beyond} the wick at **${p(tr.sl)}**, ${(tr.riskPct * 100).toFixed(2)}% away. That distance is 1R, your risk.`);
-    for (const a of plan?.adds || []) steps.push(a.n === 1
+    for (const a of cpp ? [] : plan?.adds || []) steps.push(a.n === 1
       ? `If price gets to **${p(a.price)}** (+1R), add the same size again${pr?.pct ? sizeText(1) : ''} and move all stops ${toward} to your entry, **${p(a.stop)}**.`
       : `If price gets to **${p(a.price)}** (+2R), add half your entry size${pr?.pct ? sizeText(0.5) : ''} and move all stops to break-even for the whole position, **${p(a.stop)}**.`);
     steps.push(`Take everything off at **${p(tr.tp)}**, the opposing level the move started from: ${tr.rr.toFixed(1)}R on the first entry${plan?.adds.length ? `, ${rText(plan.R)} with the adds` : ''}.`);
+    // C++ (a NY fade) is tracked with fixed targets: the bounce tends to be quick and limited
+    if (s.grade?.grade === 'C++') { const at = n => tr.entry + (short ? -1 : 1) * n * Math.abs(tr.entry - tr.sl); steps.push(`C++ targets, tracked instead of the plan: **${p(at(2))}** (2R) or **${p(at(3))}** (3R), first entry only, no adds.`); }
   } else steps.push('No trade: there’s no opposing level beyond the entry to aim for.');
   const n = o?.exitT ? Math.round((o.exitT - s.t) / H4) : 0;
   const outcome = !tr ? null
@@ -110,7 +112,7 @@ export function chartItem(s) {
   const endTip = { win: `Target hit · ${rText(o?.R ?? 0)}`, loss: 'Stopped out · −1R', entry: `Stopped at the entry · ${rText(o?.R ?? 0)}`, be: `Break-even stop · ${rText(o?.R ?? 0)}` }[o?.result];
   const context = [
     s.grade ? `Grade ${s.grade.grade}: ${s.grade.why}` : null,
-    [5, 6, 0].includes(new Date(s.t + H4).getDay()) ? 'Weekend setup: half size or skip' : null,
+    [5, 6, 0].includes(new Date(s.t + H4).getDay()) ? 'Weekend setup: no new trades (hold runners from the week)' : null,
     s.btc ? `BTC 4h trend ${s.btc.up ? 'up' : 'down'}, so this is ${s.counter ? 'against' : 'with'} it` : null,
     s.counter && s.smt?.alt ? `15m SMT vs BTC: ${smtText(s)}` : null,
     s.range?.high ? `level at ${rangeText(s)} of the 7-day range` : null,
@@ -132,8 +134,11 @@ export function chartItem(s) {
           { price: tr.entry, color: 'entry', after: true, title: 'Entry' },
           { price: tr.sl, color: 'neg', after: true, title: 'SL' },
           { price: tr.tp, color: 'pos', after: true, title: 'TP' },
-          ...(plan?.adds || []).map(a => ({ price: a.price, color: 'muted', after: true, title: `Add ${a.n}` })),
-          ...(plan?.adds.length === 2 ? [{ price: plan.adds[1].stop, color: 'muted', after: true, title: 'B/E' }] : []),
+          // C++ is tracked with fixed 2R / 3R targets, so those replace the add levels
+          ...(cpp ? [2, 3].map(n => ({ price: tr.entry + (short ? -1 : 1) * n * Math.abs(tr.entry - tr.sl), color: '#e8955a', after: true, title: `${n}R` })) : [
+            ...(plan?.adds || []).map(a => ({ price: a.price, color: 'muted', after: true, title: `Add ${a.n}` })),
+            ...(plan?.adds.length === 2 ? [{ price: plan.adds[1].stop, color: 'muted', after: true, title: 'B/E' }] : []),
+          ]),
         ] : []),
       ],
       boxes: tr ? [

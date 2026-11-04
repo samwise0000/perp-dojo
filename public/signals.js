@@ -2,8 +2,9 @@
 // rules and filters as the Telegram alerts (sfp.js ALERT_SETTINGS), so the
 // site and the bot always agree. The Signals tab lists them all; the dashboard
 // shows the latest few. Candles come from the IndexedDB cache in signal-chart.js.
-import { detect, H4, ALERT_SETTINGS, DEFAULT_PAIRS, trendMap, btcSide, gradeSetup, rsi } from './sfp.js';
-import { sessionList, nyBiasAt } from './bias.js';
+import { detect, H4, ALERT_SETTINGS, DEFAULT_PAIRS, trendMap, btcSide, gradeSetup, rsi, GRADE_ORDER } from './sfp.js';
+import { sessionList, nyBiasAt, nyFadeAt, fadesNy } from './bias.js';
+import { setupName, proposedRisk, PICKS_PER_CLOSE } from './day-playbook.js';
 import { idbGet, idbSet } from './db.js';
 import { candlesFor, pool, showOnChart, bindCharts, adds, setAdds, outcomeOf } from './signal-chart.js';
 
@@ -57,13 +58,17 @@ async function compute(days) {
   // for the grade: BTC's own SFPs (same rules) and the NY session bias from BTC's 1h candles
   const btcSfp = new Set(detect(btc, o).signals.map(s => `${s.t}:${s.side}`));
   let sessions = null;
-  try { sessions = sessionList(await hourly('BTCUSDT', since - 7 * DAY), { from: since - 7 * DAY }); } catch {}
+  let h1 = [];
+  try { h1 = await hourly('BTCUSDT', since - 7 * DAY); sessions = sessionList(h1, { from: since - 7 * DAY }); } catch {}
+  // the NY fade at each close (for C++), read once per close
+  const fadeMemo = new Map(), fadeAt = T => { if (!fadeMemo.has(T)) fadeMemo.set(T, nyFadeAt(h1, T)); return fadeMemo.get(T); };
   const signals = per.flat().map(s => {
     const trend = btcSide(s, trends, o.neutralBand);
     const ny = sessions ? nyBiasAt(sessions, s.t + H4) : null;
-    const grade = sessions ? gradeSetup(s.side, { ny, swept: btcSfp.has(`${s.t}:${s.side}`), rsi: s.rsi }) : null;
+    const grade = sessions ? gradeSetup(s.side, { ny, swept: btcSfp.has(`${s.t}:${s.side}`), rsi: s.rsi, fade: fadesNy(s.side, fadeAt(s.t + H4)) }) : null;
     return { ...s, trend, counter: trend === 'counter', btc: trends.get(s.t - H4) || null, ny, grade };
   }).sort((a, b) => b.t - a.t || a.symbol.localeCompare(b.symbol));
+  markPicks(signals);
   progress.stage = 'done'; notify();
   return { signals, errors, at: Date.now(), days };
 }
@@ -85,14 +90,33 @@ async function hourly(symbol, start) {
 }
 
 // ---- shared bits ----
-// A+ gets a gold star; the others a small letter
-const GRADES = ['A+', 'A', 'B+', 'B', 'C'];
-const gradeKey = g => 'g-' + g.toLowerCase().replace('+', 'plus');
-const gradeLabel = g => (g === 'A+' ? '★ A+' : g);
+// A++ gets a gold star; the others a small letter
+const GRADES = ['A++', 'A+', 'A', 'B+', 'B', 'C++', 'C'];
+const gradeKey = g => 'g-' + g.toLowerCase().replace(/\+/g, 'plus');
+const gradeLabel = g => (g === 'A++' ? '★ A++' : g);
+const SETUPS_IN = { 'A++': ['🌃 Late A++'], A: ['🌙 Midnight sweep'], 'B+': ['🌊 NY fade'] };
+// As the alerts mark them: ⛔ a good grade at a close the plan skips, and 👉 the picks on a close
+// with more takeable setups than the plan takes (the best grade first, then the highest R:R).
+const GOOD = new Set(['A++', 'A+', 'A', 'B+']);
+const riskOf = s => (s.grade ? proposedRisk(s.grade.grade, s.t + H4, { tag: s.grade.tag }) : null);
+const wrongTime = s => Boolean(s.trade && s.grade && GOOD.has(s.grade.grade) && riskOf(s).pct === 0);
+function markPicks(signals) {
+  const byClose = new Map();
+  for (const s of signals) { if (!s.trade || !(riskOf(s)?.pct > 0)) continue; if (!byClose.has(s.t)) byClose.set(s.t, []); byClose.get(s.t).push(s); }
+  for (const g of byClose.values()) {
+    if (g.length <= PICKS_PER_CLOSE) continue;
+    g.sort((a, b) => GRADE_ORDER.indexOf(a.grade.grade) - GRADE_ORDER.indexOf(b.grade.grade) || b.trade.rr - a.trade.rr);
+    g.slice(0, PICKS_PER_CLOSE).forEach(s => (s.pick = true));
+    g.slice(PICKS_PER_CLOSE).forEach(s => (s.passed = true));
+  }
+  return signals;
+}
+const setupOf = s => (s.grade ? setupName(s.grade.grade, s.t + H4, s.grade.tag) : null);
 const gradeChip = s => {
   if (!s.grade) return null;
-  const g = s.grade.grade, chip = el('span', 'sig-grade ' + gradeKey(g), gradeLabel(g));
-  chip.title = `Grade ${g}: ${s.grade.why}`;
+  const g = s.grade.grade, name = setupOf(s), wt = wrongTime(s);
+  const chip = el('span', 'sig-grade ' + gradeKey(g) + (wt ? ' wrong-time' : ''), gradeLabel(g) + (name ? ' ' + name.split(' ')[0] : '') + (s.pick ? ' 👉' : '') + (wt ? ' ⛔' : ''));
+  chip.title = `Grade ${g}${name ? ` · ${name}` : ''}: ${s.grade.why}` + (s.pick ? '\n👉 One of the 2 picks on a busy close' : s.passed ? '\nNot a pick: more than 2 qualified on this close' : '') + (wt ? '\n⛔ Wrong time: the plan skips this grade at this close' : '');
   return chip;
 };
 const pctS = v => (v === null || v === undefined || !Number.isFinite(v) ? '—' : (v > 0 ? '+' : v < 0 ? '−' : '') + Math.abs(v * 100).toFixed(2) + '%');
@@ -159,8 +183,13 @@ export async function renderSignalsWidget(ctx) {
 // ---- Signals tab ----
 const tab = { days: 365, pair: 'all', side: 'all', trend: 'all', grades: new Set(GRADES), sort: { key: 't', dir: -1 }, shown: 100, wired: false, data: null, busy: false };
 const GRADE_KEY = 'perp-dojo:signal-grades';
-// B+ came later: a saved choice from before it shows B+ wherever B was ticked
-try { const g = JSON.parse(localStorage.getItem(GRADE_KEY) || 'null'); if (Array.isArray(g)) tab.grades = new Set([...g, ...(g.includes('B') && !g.includes('B+') && !g.includes('v2') ? ['B+'] : [])].filter(x => GRADES.includes(x))); } catch {}
+// B+ and C++ came later: a saved choice from before them shows each wherever B (or C) was ticked
+try {
+  const g = JSON.parse(localStorage.getItem(GRADE_KEY) || 'null');
+  // v4: the old A+ is now A++, and the new A+ was part of A: keep each tick where it was
+  const v4 = !Array.isArray(g) || g.includes('v4') ? [] : [...(g.includes('A+') ? ['A++'] : []), ...(g.includes('A') ? ['A+'] : [])];
+  if (Array.isArray(g)) tab.grades = new Set([...g.map(x => (x === 'C+' ? 'C++' : x)), ...v4, ...(g.includes('B') && !g.includes('v2') && !g.includes('v3') && !g.includes('v4') ? ['B+'] : []), ...(g.includes('C') && !g.includes('v3') && !g.includes('v4') ? ['C++'] : [])].filter(x => GRADES.includes(x)));
+} catch {}
 // a signal without a grade (the NY bias couldn't be read) shows only when every grade is ticked
 const gradeOk = s => (s.grade ? tab.grades.has(s.grade.grade) : tab.grades.size === GRADES.length);
 
@@ -179,11 +208,11 @@ export function renderSignalsView(ctx) {
       const lab = el('label', 'grade-check'), box = el('input'); box.type = 'checkbox'; box.value = g; box.checked = tab.grades.has(g);
       box.onchange = () => {
         box.checked ? tab.grades.add(g) : tab.grades.delete(g);
-        try { localStorage.setItem(GRADE_KEY, JSON.stringify([...tab.grades, 'v2'])); } catch {}
+        try { localStorage.setItem(GRADE_KEY, JSON.stringify([...tab.grades, 'v4'])); } catch {}
         tab.shown = 100; paint();
       };
       lab.append(box, el('span', 'sig-grade ' + gradeKey(g), gradeLabel(g)));
-      lab.title = { 'A+': 'With the NY bias, outside the NY session, and BTC swept the same way', A: 'With the NY bias outside the session (or with a BTC sweep during it)', 'B+': 'A B whose 4h RSI is stretched the trade’s way (long under 40, short over 60)', B: 'With the NY bias, but during the NY session', C: 'Against the NY bias' }[g];
+      lab.title = { 'A++': 'With the NY bias, outside the NY session, and BTC swept the same way', 'A+': 'With the NY bias, outside the NY session, 4h RSI stretched the trade’s way (no BTC sweep)', A: 'With the NY bias outside the session (or with a BTC sweep during it)', 'B+': 'A B whose 4h RSI is stretched the trade’s way (long under 40, short over 60)', B: 'With the NY bias, but during the NY session', 'C++': 'A C that fades a 2%+ NY session at its last close (NY fade): tracking only', C: 'Against the NY bias' }[g];
       return lab;
     }));
     const pf = $('#sigPair');
@@ -278,7 +307,8 @@ function paint() {
   // one card per grade (within the other filters), then the shown list split by trend and side
   const gradeCard = g => { const d = card(`Grade ${g}`, stats(base.filter(s => s.grade?.grade === g))); d.classList.add('grade-card', gradeKey(g)); d.classList.toggle('off', !tab.grades.has(g)); return d; };
   $('#sigSummary').replaceChildren(
-    ...GRADES.map(gradeCard),
+    // each grade, then the setups tracked on their own inside it
+    ...GRADES.flatMap(g => [gradeCard(g), ...(SETUPS_IN[g] || []).map(n => { const d = card(n, stats(base.filter(s => setupOf(s) === n))); d.classList.add('grade-card', 'setup-card'); return d; })]),
     card('Signals', stats(list)),
     card('Aligned with BTC', stats(list.filter(s => s.trend === 'aligned'))),
     card('Countertrend', stats(list.filter(s => s.trend === 'counter'))),
@@ -327,7 +357,7 @@ function paint() {
 }
 
 // ---- Analytics: the six 4h closes ----
-// For each close (in local time): the year's A/A+ signals as expected results,
+// For each close (in local time): the year's A-grade signals as expected results,
 // per weekday as a heatmap, and the user's own trades grouped by the close they
 // opened after. Expected R is the single entry after fees; the scaling plan
 // adds to it on winners.
@@ -338,7 +368,7 @@ export async function renderCloseBreakdown(ctx, root, trades, fmtMoney) {
   let data;
   try { data = await loadSignals(ctx, 365); }
   catch (e) { root.replaceChildren(el('p', 'muted small', `Couldn’t load signals: ${e.message}`)); return; }
-  const good = data.signals.filter(s => s.grade && (s.grade.grade === 'A' || s.grade.grade === 'A+') && s.trade && s.trade.result !== 'open');
+  const good = data.signals.filter(s => s.grade && ['A', 'A+', 'A++'].includes(s.grade.grade) && s.trade && s.trade.result !== 'open');
   const span = Math.max(1, (Date.now() - Math.min(...data.signals.map(s => s.t))) / (7 * DAY));   // weeks covered
   const at = s => new Date(s.t + H4).getHours();
   const hours = [...new Set(data.signals.map(at))].sort((a, b) => a - b);
@@ -359,7 +389,7 @@ export async function renderCloseBreakdown(ctx, root, trades, fmtMoney) {
   // the table
   const table = el('table', 'data close-table');
   const head = el('tr');
-  for (const [h, num] of [['Close', 0], ['A/A+ a year', 1], ['A week', 1], ['Hit target', 1], ['Avg R', 1], ['Without its outliers', 1], ['Expected R a week', 1], ['Verdict', 0], ['Your trades', 1], ['Your win rate', 1], ['Your P&L', 1]]) head.append(el('th', num ? 'num' : '', h));
+  for (const [h, num] of [['Close', 0], ['A-grade a year', 1], ['A week', 1], ['Hit target', 1], ['Avg R', 1], ['Without its outliers', 1], ['Expected R a week', 1], ['Verdict', 0], ['Your trades', 1], ['Your win rate', 1], ['Your P&L', 1]]) head.append(el('th', num ? 'num' : '', h));
   const thead = el('thead'); thead.append(head);
   const body = el('tbody');
   for (const h of hours) {
@@ -398,7 +428,7 @@ export async function renderCloseBreakdown(ctx, root, trades, fmtMoney) {
         c.style.setProperty('--k', Math.abs(k).toFixed(2));
         c.classList.add(k >= 0 ? 'pos' : 'neg');
         c.append(el('b', '', rText(st.avg).replace(/(\.\d)\d/, '$1')), el('small', '', `${st.n}`));
-        c.title = `${DAYS_SHORT[d]} ${hourLabel(h)} close: ${st.n} A/A+ trades, ${Math.round(st.win * 100)}% hit target, ${rText(st.avg)} avg after fees`;
+        c.title = `${DAYS_SHORT[d]} ${hourLabel(h)} close: ${st.n} A-grade trades, ${Math.round(st.win * 100)}% hit target, ${rText(st.avg)} avg after fees`;
       } else c.append(el('small', '', '—'));
       cells.push(c); grid.append(c);
     }

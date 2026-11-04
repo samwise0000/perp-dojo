@@ -1675,6 +1675,7 @@ td.counter { color: var(--warn); }
 .sig-grade { --gold: #f5b942; --gold-2: #ffe08a; --green: #22c55e; --bronze: #cd7f32; position: relative; overflow: hidden; display: inline-block; font-size: 11.5px; font-weight: 800; letter-spacing: .02em;
   padding: 0 8px; border-radius: 999px; white-space: nowrap; line-height: 18px; align-self: center; background: var(--wash); color: var(--muted); }
 /* C: bronze · B: the win color, solid · B+: sky blue with a sheen · A: green with a sheen · A+: gold with a glow, a star and a sheen */
+.sig-grade.g-cplusplus { color: #fff; background: linear-gradient(135deg, #f4b183, #e8955a 50%, #b8622c); box-shadow: 0 0 0 1px color-mix(in srgb, #e8955a 60%, #fff), 0 2px 8px -2px color-mix(in srgb, #e8955a 60%, transparent); text-shadow: 0 1px 0 rgb(0 0 0 / .2); }
 .sig-grade.g-c { color: #fff3e6; background: linear-gradient(135deg, #e0a06a, var(--bronze) 50%, #9a5a24);
   box-shadow: 0 0 0 1px color-mix(in srgb, var(--bronze) 60%, transparent); text-shadow: 0 1px 0 rgb(0 0 0 / .2); }
 .sig-grade.g-b { color: #fff; background: linear-gradient(135deg, color-mix(in srgb, var(--pos) 92%, #fff), color-mix(in srgb, var(--pos) 70%, #0f766e));
@@ -1683,22 +1684,23 @@ td.counter { color: var(--warn); }
   box-shadow: 0 0 0 1px color-mix(in srgb, #0ea5e9 60%, #fff), 0 2px 10px -2px color-mix(in srgb, #0ea5e9 70%, transparent); text-shadow: 0 1px 0 rgb(0 0 0 / .2); }
 .sig-grade.g-a { color: #fff; background: linear-gradient(135deg, #4ade80, var(--green) 45%, #15803d);
   box-shadow: 0 0 0 1px color-mix(in srgb, var(--green) 60%, #fff), 0 2px 10px -2px color-mix(in srgb, var(--green) 70%, transparent); text-shadow: 0 1px 0 rgb(0 0 0 / .2); }
-.sig-grade.g-aplus { color: #4a3000; background: linear-gradient(135deg, var(--gold-2), var(--gold) 45%, #e0901f);
+.sig-grade.g-aplusplus { color: #4a3000; background: linear-gradient(135deg, var(--gold-2), var(--gold) 45%, #e0901f);
   box-shadow: 0 0 0 1px color-mix(in srgb, var(--gold) 70%, #fff), 0 0 12px -1px color-mix(in srgb, var(--gold) 75%, transparent); text-shadow: 0 1px 0 rgb(255 255 255 / .35); }
 /* the sheen: a light band that sweeps across now and then (cards only, not every table row) */
-.sig-tile .sig-grade.g-a::after, .sig-tile .sig-grade.g-aplus::after, .grade-card.g-aplus dt::after, .grade-card.g-a dt::after,
-.grade-check .sig-grade.g-a::after, .grade-check .sig-grade.g-aplus::after, .sig-tile .sig-grade.g-bplus::after, .grade-check .sig-grade.g-bplus::after {
+.sig-tile .sig-grade.g-a::after, .sig-tile .sig-grade.g-aplusplus::after, .grade-card.g-aplusplus dt::after, .grade-card.g-a dt::after,
+.grade-check .sig-grade.g-a::after, .grade-check .sig-grade.g-aplusplus::after, .sig-tile .sig-grade.g-bplus::after, .grade-check .sig-grade.g-bplus::after {
   content: ''; position: absolute; inset: -2px; transform: translateX(-120%) skewX(-20deg); pointer-events: none;
   background: linear-gradient(90deg, transparent, rgb(255 255 255 / .75), transparent); animation: gradeShine 3.2s ease-in-out infinite; }
-.sig-tile .sig-grade.g-aplus::after { animation-duration: 2.4s; }
-.sig-tile .sig-grade.g-aplus { animation: gradeGlow 2.4s ease-in-out infinite; }
+.sig-tile .sig-grade.g-aplusplus::after { animation-duration: 2.4s; }
+.sig-tile .sig-grade.g-aplusplus { animation: gradeGlow 2.4s ease-in-out infinite; }
 @keyframes gradeShine { 0%, 55% { transform: translateX(-120%) skewX(-20deg); } 80%, 100% { transform: translateX(120%) skewX(-20deg); } }
 @keyframes gradeGlow { 50% { box-shadow: 0 0 0 1px color-mix(in srgb, var(--gold) 70%, #fff), 0 0 18px 1px color-mix(in srgb, var(--gold) 85%, transparent); } }
 /* the whole card picks up the grade's color */
-.sig-tile.tile-g-aplus { border-color: color-mix(in srgb, #f5b942 65%, var(--ring)); background: linear-gradient(160deg, color-mix(in srgb, #f5b942 14%, var(--card-2)), var(--card-2) 60%); box-shadow: 0 0 16px -6px color-mix(in srgb, #f5b942 80%, transparent); }
+.sig-tile.tile-g-aplusplus { border-color: color-mix(in srgb, #f5b942 65%, var(--ring)); background: linear-gradient(160deg, color-mix(in srgb, #f5b942 14%, var(--card-2)), var(--card-2) 60%); box-shadow: 0 0 16px -6px color-mix(in srgb, #f5b942 80%, transparent); }
 .sig-tile.tile-g-a { border-color: color-mix(in srgb, #22c55e 50%, var(--ring)); background: linear-gradient(160deg, color-mix(in srgb, #22c55e 10%, var(--card-2)), var(--card-2) 60%); box-shadow: 0 0 14px -8px #22c55e; }
 .sig-tile.tile-g-bplus { border-color: color-mix(in srgb, #0ea5e9 45%, var(--ring)); background: linear-gradient(160deg, color-mix(in srgb, #0ea5e9 9%, var(--card-2)), var(--card-2) 60%); }
 .sig-tile.tile-g-b { border-color: color-mix(in srgb, var(--pos) 35%, var(--ring)); }
+.sig-tile.tile-g-cplusplus { border-color: color-mix(in srgb, #e8955a 45%, var(--ring)); }
 .sig-tile.tile-g-c { border-color: color-mix(in srgb, #cd7f32 30%, var(--ring)); }
 /* Signals tab: grade checkboxes and per-grade summary cards */
 .grade-checks { display: flex; gap: 4px; align-items: center; padding: 3px 6px; border: 1px solid var(--ring); border-radius: 999px; background: var(--card); }
@@ -1708,17 +1710,19 @@ td.counter { color: var(--warn); }
 .grade-check:focus-within { outline: 2px solid color-mix(in srgb, var(--a1, var(--accent)) 50%, transparent); }
 .grade-card { position: relative; overflow: hidden; }
 .grade-card.off { opacity: .5; }
-.grade-card.g-aplus { border-color: color-mix(in srgb, #f5b942 60%, var(--ring)); background: linear-gradient(160deg, color-mix(in srgb, #f5b942 12%, var(--card)), var(--card) 65%); }
-.grade-card.g-aplus dt { position: relative; overflow: hidden; display: inline-block; color: #a8730a; font-weight: 700; }
+.grade-card.g-aplusplus { border-color: color-mix(in srgb, #f5b942 60%, var(--ring)); background: linear-gradient(160deg, color-mix(in srgb, #f5b942 12%, var(--card)), var(--card) 65%); }
+.grade-card.g-aplusplus dt { position: relative; overflow: hidden; display: inline-block; color: #a8730a; font-weight: 700; }
 .grade-card.g-a { border-color: color-mix(in srgb, #22c55e 45%, var(--ring)); background: linear-gradient(160deg, color-mix(in srgb, #22c55e 9%, var(--card)), var(--card) 65%); }
 .grade-card.g-a dt { position: relative; overflow: hidden; display: inline-block; color: #16a34a; font-weight: 700; }
 .grade-card.g-bplus { border-color: color-mix(in srgb, #0ea5e9 45%, var(--ring)); background: linear-gradient(160deg, color-mix(in srgb, #0ea5e9 8%, var(--card)), var(--card) 65%); }
 .grade-card.g-bplus dt { color: #0284c7; font-weight: 700; }
 .grade-card.g-b { border-color: color-mix(in srgb, var(--pos) 35%, var(--ring)); }
 .grade-card.g-b dt { color: var(--pos); font-weight: 700; }
+.grade-card.g-cplusplus { border-color: color-mix(in srgb, #e8955a 45%, var(--ring)); }
+.grade-card.g-cplusplus dt { color: #c46f34; font-weight: 700; }
 .grade-card.g-c { border-color: color-mix(in srgb, #cd7f32 35%, var(--ring)); }
 .grade-card.g-c dt { color: #b06a2a; font-weight: 700; }
-@media (prefers-reduced-motion: reduce) { .sig-grade::after, .grade-card dt::after { display: none; } .sig-tile .sig-grade.g-aplus { animation: none; } }
+@media (prefers-reduced-motion: reduce) { .sig-grade::after, .grade-card dt::after { display: none; } .sig-tile .sig-grade.g-aplusplus { animation: none; } }
 .sig-res { font-weight: 600; font-variant-numeric: tabular-nums; font-size: 12.5px; white-space: nowrap; }
 .sig-res.pos { color: var(--pos); } .sig-res.neg { color: var(--neg); }
 .sig-trend { font-size: 11px; font-weight: 600; padding: 1px 7px; border-radius: 999px; white-space: nowrap; background: var(--wash); color: var(--muted); }
@@ -2203,10 +2207,11 @@ td.counter { color: var(--warn); }
 .st-edge-t.yes { fill: var(--pos); } .st-edge-t.no { fill: var(--neg); }
 .st-leaf rect { stroke-width: 1.6; }
 .st-leaf-g { font-size: 15px; font-weight: 800; } .st-leaf-s { font-size: 10.5px; fill: var(--ink-2); }
-.st-leaf.g-aplus rect { fill: color-mix(in srgb, #f5b942 22%, var(--card)); stroke: #f5b942; } .st-leaf.g-aplus .st-leaf-g { fill: #d99a1a; }
+.st-leaf.g-aplusplus rect { fill: color-mix(in srgb, #f5b942 22%, var(--card)); stroke: #f5b942; } .st-leaf.g-aplusplus .st-leaf-g { fill: #d99a1a; }
 .st-leaf.g-a rect { fill: color-mix(in srgb, #22c55e 18%, var(--card)); stroke: #22c55e; } .st-leaf.g-a .st-leaf-g { fill: #16a34a; }
 .st-leaf.g-bplus rect { fill: color-mix(in srgb, #0ea5e9 18%, var(--card)); stroke: #0ea5e9; } .st-leaf.g-bplus .st-leaf-g { fill: #0284c7; }
 .st-leaf.g-b rect { fill: color-mix(in srgb, var(--pos) 12%, var(--card)); stroke: var(--pos); } .st-leaf.g-b .st-leaf-g { fill: var(--pos); }
+.st-leaf.g-cplusplus rect { fill: color-mix(in srgb, #e8955a 16%, var(--card)); stroke: #e8955a; } .st-leaf.g-cplusplus .st-leaf-g { fill: #c46f34; }
 .st-leaf.g-c rect { fill: color-mix(in srgb, #cd7f32 16%, var(--card)); stroke: #cd7f32; } .st-leaf.g-c .st-leaf-g { fill: #b06a2a; }
 /* text blocks */
 .st-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 28px; }
@@ -2228,7 +2233,7 @@ td.counter { color: var(--warn); }
 /* grade cards */
 .st-grades { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 12px; margin-top: 14px; }
 .st-grade { --g: var(--ring); padding: 14px 16px; border-radius: var(--radius); border: 1px solid color-mix(in srgb, var(--g) 50%, var(--ring)); background: linear-gradient(165deg, color-mix(in srgb, var(--g) 10%, var(--card)), var(--card) 60%); }
-.st-grade.g-aplus { --g: #f5b942; } .st-grade.g-a { --g: #22c55e; } .st-grade.g-bplus { --g: #0ea5e9; } .st-grade.g-b { --g: var(--pos); } .st-grade.g-c { --g: #cd7f32; }
+.st-grade.g-aplusplus { --g: #f5b942; } .st-grade.g-a { --g: #22c55e; } .st-grade.g-bplus { --g: #0ea5e9; } .st-grade.g-b { --g: var(--pos); } .st-grade.g-c { --g: #cd7f32; } .st-grade.g-cplusplus { --g: #e8955a; }
 .st-grade header { display: flex; align-items: center; gap: 10px; }
 .st-grade header .sig-grade { font-size: 14px; line-height: 24px; padding: 0 11px; }
 .st-grade h3 { margin: 0; font-size: 15px; }
@@ -2292,3 +2297,86 @@ td.counter { color: var(--warn); }
   .st-stats { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .st-matrix { font-size: 12px; }
 }
+
+/* ================= Forward test tab ================= */
+.fw-head h2 { font-size: 20px; font-family: var(--font-display); }
+.fw-start { display: flex; flex-direction: column; gap: 4px; align-items: flex-end; }
+.fw-start input { font: inherit; padding: 5px 8px; border-radius: var(--radius-sm); border: 1px solid var(--ring); background: var(--card-2); color: var(--ink); }
+.fw-prog-row { display: flex; align-items: center; gap: 12px; margin: 10px 0 12px; }
+.fw-prog-row b { font-size: 18px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.fw-prog { flex: 1; height: 10px; border-radius: 999px; background: var(--wash); border: 1px solid var(--ring); overflow: hidden; min-width: 80px; }
+.fw-prog i { display: block; height: 100%; background: var(--pos); border-radius: 999px; }
+.fw-verdict { display: grid; gap: 2px; padding: 10px 14px; border-radius: var(--radius-sm); border: 1px solid var(--ring); border-left: 4px solid var(--muted); background: var(--wash); }
+.fw-verdict span { font-size: 13px; color: var(--ink-2); }
+.fw-verdict.pos { border-left-color: var(--pos); } .fw-verdict.neg { border-left-color: var(--neg); } .fw-verdict.ok { border-left-color: var(--a5); }
+.fw-disc { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin: 8px 0 12px; }
+.fw-disc > div { padding: 8px 12px; border-radius: var(--radius-sm); background: var(--wash); border: 1px solid var(--ring); }
+.fw-disc dt { font-size: 18px; font-weight: 800; font-variant-numeric: tabular-nums; } .fw-disc dt.warn { color: var(--warn); }
+.fw-disc dd { margin: 0; font-size: 12.5px; font-weight: 600; } .fw-disc small { font-size: 11.5px; }
+.fw-curve svg { display: block; width: 100%; height: auto; }
+.fw-zero { stroke: var(--axis); stroke-dasharray: 3 3; }
+.fw-tick { font-size: 11px; fill: var(--muted); }
+.fw-line { fill: none; stroke-width: 2.2; stroke-linejoin: round; }
+.fw-line.you { stroke: var(--a1); } .fw-line.plan { stroke: var(--muted); stroke-dasharray: 5 4; }
+.fw-key { display: flex; gap: 14px; font-size: 12px; color: var(--ink-2); flex-wrap: wrap; }
+.fw-key span::before { content: ''; display: inline-block; width: 14px; height: 3px; border-radius: 2px; margin-right: 6px; vertical-align: middle; }
+.fw-key .you::before { background: var(--a1); } .fw-key .plan::before { background: var(--muted); }
+.fw-table tr.fw-off { opacity: .55; }
+.fw-table tr.clickable, .fw-missed tr.clickable { cursor: pointer; }
+.fw-missed summary { cursor: pointer; font-weight: 600; }
+@media (max-width: 760px) { .fw-start { align-items: flex-start; } .fw-head .card-row { flex-direction: column; } }
+.fw-kpi-v { font-size: 24px; font-weight: 750; font-variant-numeric: tabular-nums; margin: 4px 0 2px; } .fw-kpi-v.pos { color: var(--pos); } .fw-kpi-v.neg { color: var(--neg); }
+@media (max-width: 1240px) { #view-forward .c3 { grid-column: span 6; } #view-forward .c6 { grid-column: span 12; } }
+.fw-top { justify-content: flex-start; }
+.fw-top .fw-start { align-items: flex-start; }
+.nav-beta { margin-left: auto; font-size: 9.5px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; padding: 1px 6px; border-radius: 999px; color: var(--a2); border: 1px solid color-mix(in srgb, var(--a2) 50%, transparent); background: color-mix(in srgb, var(--a2) 12%, transparent); }
+/* Strategy: every setup, and per grade */
+.st-setup-t td { vertical-align: top; } .st-setup-t td.num { white-space: nowrap; }
+.st-setup-t .sig-grade { font-size: 11px; }
+.st-setup-t td.pos { color: var(--pos); } .st-setup-t td.neg { color: var(--neg); }
+.st-setup-t { width: 100%; }
+/* the last column takes what's left and truncates; the full text is on hover */
+.st-setup-t .st-why { font-size: 12px; color: var(--ink-2); width: 100%; max-width: 0; }
+.st-setup-t .st-why span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 60px; cursor: help; }
+.st-setup-t .st-when { white-space: normal; min-width: 130px; } .st-setup-t .st-risk-c { white-space: normal; min-width: 70px; }
+.st-setup-t th, .st-setup-t td { padding-left: 6px; padding-right: 6px; }
+.st-setup-t.avoid tbody tr { background: color-mix(in srgb, var(--neg) 4%, transparent); }
+.st-tag { font-size: 11px; color: var(--ink-2); white-space: nowrap; }
+.st-setups { list-style: none; margin: 10px 0 0; padding: 0; display: grid; gap: 6px; }
+.st-setups li { display: flex; gap: 8px; align-items: baseline; padding: 6px 10px; border-radius: var(--radius-sm); background: var(--wash); font-size: 12.5px; }
+.st-setups li i { font-style: normal; font-weight: 800; width: 14px; flex: none; text-align: center; }
+.st-setups li.yes i { color: var(--pos); } .st-setups li.track i { color: var(--a3); } .st-setups li.no i { color: var(--neg); }
+.st-setups li.no { opacity: .75; }
+.st-setups small { display: block; color: var(--muted); font-size: 11.5px; margin-top: 1px; }
+/* condition dots in the setup tables */
+.st-cth { font-size: 9.5px !important; text-align: left !important; color: var(--muted); line-height: 1.15; }
+.st-cth span { display: inline-block; width: 15px; writing-mode: vertical-rl; transform: rotate(180deg); white-space: nowrap; vertical-align: bottom; margin: 0 2px; }
+.st-setup-t .st-days { display: block; font-size: 10.5px; color: var(--muted); }
+.st-ctd { white-space: nowrap; } .st-ctd .st-cdot { margin: 0 4px 0 4px; }
+.st-cdot { display: inline-block; width: 11px; height: 11px; border-radius: 50%; vertical-align: middle; cursor: help; }
+.st-cdot.yes { background: var(--pos); box-shadow: 0 0 0 2px color-mix(in srgb, var(--pos) 25%, transparent); }
+.st-cdot.no { background: var(--neg); box-shadow: 0 0 0 2px color-mix(in srgb, var(--neg) 25%, transparent); }
+.st-cdot.any { background: transparent; border: 1.5px solid var(--axis); width: 9px; height: 9px; }
+.st-clegend { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; font-size: 12px; color: var(--muted) !important; margin: 6px 0 0 !important; }
+.st-clegend .st-cdot { margin-left: 8px; } .st-clegend .st-cdot:first-child { margin-left: 0; }
+.st-wrong { display: inline-block; margin-left: 4px; font-size: 10.5px; font-weight: 700; padding: 0 6px; border-radius: 999px; white-space: nowrap; color: var(--neg); border: 1px solid color-mix(in srgb, var(--neg) 45%, transparent); background: color-mix(in srgb, var(--neg) 10%, transparent); }
+.st-avoid-h { margin-top: 14px !important; }
+.pb-slot.skip { opacity: .6; border-style: dashed; } .pb-slot.skip span { color: var(--muted); font-weight: 600; }
+/* A+: teal-green with a sheen (A++ has the gold) */
+.sig-grade.g-aplus { color: #fff; background: linear-gradient(135deg, #5eead4, #14b8a6 45%, #0f766e); box-shadow: 0 0 0 1px color-mix(in srgb, #14b8a6 60%, #fff), 0 2px 10px -2px color-mix(in srgb, #14b8a6 70%, transparent); text-shadow: 0 1px 0 rgb(0 0 0 / .2); }
+.sig-tile .sig-grade.g-aplus::after, .grade-check .sig-grade.g-aplus::after, .grade-card.g-aplus dt::after { content: ''; position: absolute; inset: -2px; transform: translateX(-120%) skewX(-20deg); pointer-events: none; background: linear-gradient(90deg, transparent, rgb(255 255 255 / .75), transparent); animation: gradeShine 3.2s ease-in-out infinite; }
+.sig-tile.tile-g-aplus { border-color: color-mix(in srgb, #14b8a6 50%, var(--ring)); background: linear-gradient(160deg, color-mix(in srgb, #14b8a6 10%, var(--card-2)), var(--card-2) 60%); }
+.grade-card.g-aplus { border-color: color-mix(in srgb, #14b8a6 45%, var(--ring)); background: linear-gradient(160deg, color-mix(in srgb, #14b8a6 9%, var(--card)), var(--card) 65%); }
+.grade-card.g-aplus dt { position: relative; overflow: hidden; display: inline-block; color: #0d9488; font-weight: 700; }
+.st-leaf.g-aplus rect { fill: color-mix(in srgb, #14b8a6 18%, var(--card)); stroke: #14b8a6; } .st-leaf.g-aplus .st-leaf-g { fill: #0d9488; }
+.st-grade.g-aplus { --g: #14b8a6; }
+.grade-card.setup-card { border-style: dashed; } .grade-card.setup-card dt { font-weight: 700; }
+.fw-sub td:first-child { padding-left: 18px; color: var(--ink-2); font-size: 12.5px; }
+.st-cdot.blank { visibility: hidden; }
+.st-sess { display: inline-block; width: 44px; text-align: center; font-size: 10.5px; font-weight: 700; border-radius: 999px; padding: 0 4px; margin: 0 2px; vertical-align: middle; color: var(--ink-2); background: var(--wash); border: 1px solid var(--ring); }
+.st-sess.open { color: var(--a1); border-color: color-mix(in srgb, var(--a1) 45%, transparent); }
+.st-slot { display: inline-block; width: 19px; text-align: center; vertical-align: middle; }
+.st-slot.sess { width: 52px; }
+.st-slot .st-cdot, .st-slot .st-sess { margin: 0; }
+.st-cth span.sess { width: 15px; margin: 0 18.5px; }
+.sig-grade.wrong-time { filter: grayscale(.7); opacity: .75; }
