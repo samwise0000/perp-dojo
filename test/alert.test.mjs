@@ -144,3 +144,29 @@ test('each setup gets a grade with the reason', async () => {
   assert.ok(pre.indexOf('ONDO') < pre.indexOf('AAVE'));                 // best grade first
   assert.match(closeMessage(res, w, { ny: { ...bear, during: true } }), /✅ <b>ONDO short<\/b>  100  ·  🥈 <b>B<\/b>\n/);
 });
+
+test('more than 2 takeable setups on one close: the 2 picks are marked', async () => {
+  const { preMessage, closeMessage, picksOf } = await import('../lib/sfp-alert.mjs');
+  const tz = 'Asia/Makassar', close = Date.UTC(2026, 10, 3, 4);           // Tue 12:00 in UTC+8, a main close
+  const bear = { bias: 'bearish', during: false };
+  const sig = (rr, side = 'Short') => ({ side, close: 100, line: 101, inside: 0.01, levels: [{ price: 101 }], range: {}, trade: { entry: 100, sl: 102, tp: 100 - 2 * rr, rr } });
+  const a = sig(3), b = sig(8), c = sig(5), d = sig(9, 'Long');         // the long is a C (against the bias): not takeable
+  const ctx = { ny: bear, btcSides: [] };
+  const pk = picksOf([a, b, c, d], ctx, close, tz);
+  assert.equal(pk.n, 3);
+  assert.deepEqual([...pk.picks], [b, c]);                              // highest R:R first
+  assert.equal(picksOf([a, b, d], ctx, close, tz).picks.size, 0);       // only 2 takeable: nothing to choose
+  const pkA = picksOf([a, b, c], { ny: bear, btcSides: ['Short'] }, close, tz);   // all A+ now
+  assert.equal(pkA.picks.size, 2);
+  const res = ['AAVEUSDT', 'HYPEUSDT', 'SUIUSDT', 'ONDOUSDT'].map((symbol, i) => ({ symbol, pre: [[a, b, c, d][i]], final: [[a, b, c, d][i]], closed: { c: 100 } }));
+  const w = { close };
+  const pre = preMessage(res, w, { tz, ny: bear });
+  assert.match(pre, /👉 3 setups you could take: the 2 picks are marked/);
+  assert.match(pre, /HYPE short<\/b>  100  ·  🥇 <b>A<\/b>  ·  👉 <b>pick<\/b>/);
+  assert.match(pre, /SUI short<\/b>  100  ·  🥇 <b>A<\/b>  ·  👉 <b>pick<\/b>/);
+  assert.doesNotMatch(pre, /AAVE short<\/b>  100  ·  🥇 <b>A<\/b>  ·  👉/);
+  assert.ok(pre.indexOf('HYPE') < pre.indexOf('AAVE'));                  // picks listed first within the grade
+  assert.match(closeMessage(res, w, { tz, ny: bear }), /✅ <b>HYPE short<\/b>  100  ·  🥇 <b>A<\/b>  ·  👉 <b>pick<\/b>/);
+  const fri = Date.UTC(2026, 10, 6, 16);                                 // Sat 00:00 in UTC+8: nothing takeable at a late weekend close
+  assert.equal(picksOf([a, b, c], ctx, fri, tz).n, 0);
+});

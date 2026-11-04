@@ -248,7 +248,11 @@ test('position notes: NY bias, plan step, weekend', async () => {
   assert.match(n[1], /^\+1\.5R: past \+1R/);
   assert.match(positionNotes({ ...short, dir: 'Long', sl: 98, mark: 100.5 }, { sessions, now: wed }).map(x => x.text).join('|'), /Against the NY bias ▼.*\+0\.3R: stop at the wick, first add at 102/);
   assert.match(positionNotes({ ...short, sl: 99.5 }, { sessions, now: wed })[1].text, /protected/);
-  assert.match(positionNotes(short, { sessions, now: new Date(2026, 10, 7, 10) }).at(-1).text, /Weekend/);
+  const sat = new Date(2026, 10, 7, 10);
+  assert.match(positionNotes(short, { sessions, now: sat }).at(-1).text, /^Weekend, in profit: consider adding on a pullback/);   // +1.5R
+  assert.match(positionNotes({ ...short, mark: 99.5 }, { sessions, now: sat }).at(-1).text, /^Weekend: hold your runner/);       // +0.25R
+  assert.match(positionNotes({ ...short, sl: 99.5 }, { sessions, now: sat }).at(-1).text, /consider adding/);                   // stop past entry, in profit
+  assert.match(positionNotes({ ...short, sl: 99.5, mark: 101 }, { sessions, now: sat }).at(-1).text, /hold your runner/);         // stop past entry, but underwater
 });
 
 test('playbook countdowns', async () => {

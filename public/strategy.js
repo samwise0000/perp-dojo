@@ -4,7 +4,7 @@
 // playbook do. Backtest figures are a snapshot (past year to 4 Nov 2026,
 // scaling plan, after Bybit fees) and say so on the page.
 import { ALERT_SETTINGS, BPLUS_RSI, scalePlan, DEFAULT_PAIRS } from './sfp.js';
-import { RISK_PCT, OFF_HOURS, OFF_HOURS_PCT, BPLUS_HOURS, SESSION, SLOTS, MAX_POSITIONS } from './day-playbook.js';
+import { RISK_PCT, OFF_HOURS, OFF_HOURS_PCT, BPLUS_HOURS, SESSION, SLOTS, MAX_POSITIONS, PICKS_PER_CLOSE } from './day-playbook.js';
 import { zonedToUtc, NY_TZ } from './bias.js';
 
 const AS_OF = '4 Nov 2026';
@@ -278,7 +278,8 @@ export function renderStrategy(root) {
     </tbody></table></div>
     <ul class="st-list">
       <li>Risk is the loss <b>to the stop</b>, as a share of your equity. Size the position from it: the trade guide on each signal does the maths.</li>
-      <li>At most <b>${MAX_POSITIONS} positions</b> open. Alts often signal together on one close and all move with BTC, so they’re really one bet.</li>
+      <li>At most <b>${PICKS_PER_CLOSE} new trades per close</b> and <b>${MAX_POSITIONS} open</b> in all. Alts often signal together on one close and all move with BTC, so they’re really one bet: this halved the worst day (−7R vs −14R) for about 17% less profit.</li>
+      <li>When more qualify, take <b>A+ first, then the highest R:R</b>. The pick mattered: the highest R:R made far more than a random choice. The alerts mark the picks 👉.</li>
       <li>Never move a stop further away, never average down.</li>
     </ul>
   </section>

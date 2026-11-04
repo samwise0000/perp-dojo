@@ -31,6 +31,9 @@ export const SLOTS = [
 ];
 const SLOT_TEXT = { prime: 'Prime', ok: 'OK', weak: 'Weak' };
 export const MAX_POSITIONS = 5;
+// At most this many new trades on one 4h close: when more qualify, A+ first, then
+// the highest R:R. Backtest: 681R vs 817R uncapped per close, worst day −7R vs −14R.
+export const PICKS_PER_CLOSE = 2;
 
 // Risk per trade, % of account equity, by grade. Half on a weak close; nothing
 // outside the trading day. Change the numbers here.
@@ -64,6 +67,7 @@ const ALWAYS = [
   ['Hours', 'Trade 8 AM to 4 PM: only the 08:00, 12:00 and 16:00 closes. No trades between closes. At 20:00, 00:00 and 04:00 (Mon–Thu) take A+ only, plus B+ at 00:00 and 04:00, all at 0.25%. Nothing outside the main closes on Fri–Sun.'],
   ['Grades', 'Trade A+ and A. B+ (a B with the 4h RSI under 40 for a long, over 60 for a short) at the late closes above. Be cautious with plain B: it lost money in the backtest. Mostly avoid C: trading against yesterday’s NY bias had no edge.'],
   ['Entry', 'At the 4h close, stop at the wick, target at the opposing level.'],
+  ['Per close', 'At most 2 new trades on one close, 5 open in all. If more qualify, take A+ first, then the highest R:R. The alerts mark them 👉 pick.'],
   ['Scale in', 'At +1R add the same size and move all stops to your entry. At +2R add half size and move all stops to break-even.'],
   ['Never', 'Average down, take profit early, or move a stop further away.'],
 ];
@@ -188,6 +192,14 @@ export function positionNotes(p, { sessions = [], now = new Date(), price = v =>
     const pct = -p.slLoss / equity * 100;
     if (pct > RISK_PCT['A+'] * 1.25) notes.push({ cls: 'warn', text: `Risking ${pct.toFixed(1)}% of equity to the stop: the plan's most is ${RISK_PCT['A+']}% (A+)` });
   }
-  if ([5, 6, 0].includes(now.getDay())) notes.push({ cls: 'muted', text: 'Weekend: hold your runner, don’t close for the weekend' });
+  // into the weekend in profit (+1R or better, or stop already at/past entry): runners held over it
+  // tended to keep going, and an add that risked 1R to the existing stop made money in the backtest
+  if ([5, 6, 0].includes(now.getDay())) {
+    const risk = p.sl && p.entry ? d * (p.entry - p.sl) : null, r = risk > 0 && p.mark ? d * (p.mark - p.entry) / risk : null;
+    const ahead = p.mark && d * (p.mark - p.entry) > 0 && (r === null ? risk !== null : r >= 1);
+    notes.push(ahead
+      ? { cls: 'pos', text: 'Weekend, in profit: consider adding on a pullback. Size it to risk 1R to your current stop, and don’t move the stop up for it' }
+      : { cls: 'muted', text: 'Weekend: hold your runner, don’t close for the weekend' });
+  }
   return notes;
 }
