@@ -7,6 +7,7 @@ import {
 } from './metrics.js';
 import { openReplay } from './replay.js';
 import { renderSignalsView, renderSignalsWidget, renderCloseBreakdown } from './signals.js';
+import { renderStrategy } from './strategy.js';
 import { nySessions, currentBias, NY_HOURS, NY_TZ } from './bias.js';
 import { normalizeAll } from './trades.js';
 import { pull } from './sync.js';
@@ -262,7 +263,7 @@ applyTheme(savedTheme() || systemTheme());
 matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => { if (!savedTheme()) applyTheme(systemTheme()); });
 
 // ---------- views ----------
-const TITLES = { dashboard: 'Dashboard', analytics: 'Analytics', journal: 'Journal', review: 'Weekly review', reports: 'Reports', playbook: 'Playbook', wizard: 'Entry wizard', trades: 'Trades', signals: 'Signals' };
+const TITLES = { dashboard: 'Dashboard', analytics: 'Analytics', journal: 'Journal', review: 'Weekly review', reports: 'Reports', playbook: 'Playbook', wizard: 'Entry wizard', trades: 'Trades', signals: 'Signals', strategy: 'Strategy' };
 function setView(v, { hash = true } = {}) {
   view = v; store.set('view', v);
   if (hash) syncHash();
@@ -607,9 +608,10 @@ function render() {
     ? `${s.n.toLocaleString()} closed trade${s.n === 1 ? '' : 's'} · ${date(from ?? s.first)} – ${date(to ?? s.last)}${filters.symbol !== 'all' ? ' · ' + filters.symbol : ''}${filters.side !== 'all' ? ' · ' + filters.side.toLowerCase() + 's' : ''}${filters.strategy !== 'all' ? ' · ' + (filters.strategy === 'none' ? 'unlabeled' : strategyName(filters.strategy)) : ''}`
     : 'No closed trades in this range.';
   // the journal is about days, not the filtered range: no filters, its own subtitle
-  $('#report .filters').hidden = ['journal', 'playbook', 'wizard', 'review', 'reports', 'signals'].includes(view);
+  $('#report .filters').hidden = ['journal', 'playbook', 'wizard', 'review', 'reports', 'signals', 'strategy'].includes(view);
   if (view === 'signals') $('#rangeText').textContent = 'Every 4h swing failure on your pairs, as the Telegram alerts see them';
   if (view === 'reports') $('#rangeText').textContent = 'A written report for each month, from every trade in it';
+  if (view === 'strategy') $('#rangeText').textContent = 'The 4h swing-failure strategy: the setup, the grades, when and how much';
   if (view === 'review') $('#rangeText').textContent = 'One week at a time: the numbers, your rules, and what to change';
   if (view === 'wizard') $('#rangeText').textContent = 'Check the setup, get the amount to risk';
   if (view === 'journal') {
@@ -626,6 +628,7 @@ function render() {
   else if (view === 'review') renderReview();
   else if (view === 'reports') renderReports();
   else if (view === 'signals') renderSignalsView(scanCtx());
+  else if (view === 'strategy') renderStrategy($('#view-strategy'));
   else renderTrades(trades);
 }
 
@@ -2345,7 +2348,7 @@ function syncHash() {
   if (location.hash !== want) history.replaceState(null, '', want);
 }
 function readHash() {
-  const m = location.hash.match(/^#(dashboard|analytics|journal|review|reports|playbook|wizard|trades|scanner|signals)(?:\/([\w-]+))?$/);
+  const m = location.hash.match(/^#(dashboard|analytics|journal|review|reports|playbook|wizard|trades|scanner|signals|strategy)(?:\/([\w-]+))?$/);
   if (!m) return false;
   if (m[1] === 'journal' && /^\d{4}-\d{2}-\d{2}$/.test(m[2] || '')) { jr.day = m[2]; const d = keyToDate(m[2]); jr.month = { y: d.getFullYear(), m: d.getMonth() }; }
   if (m[1] === 'playbook' && m[2]) pb.id = m[2];

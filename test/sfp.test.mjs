@@ -224,7 +224,16 @@ test('proposed risk: by grade, half on a weak close, none outside the trading da
   assert.equal(proposedRisk('A', at(4, 16)).pct, 0.5);                 // Thursday 16:00 is weak: half
   assert.equal(proposedRisk('A', at(5, 8)).pct, 0.5);                  // Friday: half
   assert.equal(proposedRisk('A', at(1, 20)).pct, 0);                   // outside the trading day
+  assert.equal(proposedRisk('A+', at(1, 20)).pct, 0.25);               // ...except A+, Mon–Thu, at a quarter percent
+  assert.equal(proposedRisk('A+', at(4, 4)).pct, 0.25);
+  assert.equal(proposedRisk('A+', at(5, 0)).pct, 0);                   // not on Friday
+  assert.equal(proposedRisk('A+', at(1, 21)).pct, 0);                  // not between closes
   assert.equal(proposedRisk('B', at(5, 8)).pct, 0);                    // B on a weak close: skip
+  assert.equal(proposedRisk('B+', at(2, 0)).pct, 0.25);               // B+ at 00:00 / 04:00, Mon–Thu
+  assert.equal(proposedRisk('B+', at(4, 4)).pct, 0.25);
+  assert.equal(proposedRisk('B+', at(1, 20)).pct, 0);                  // ...not at 20:00
+  assert.equal(proposedRisk('B+', at(5, 0)).pct, 0);                   // ...not on Friday
+  assert.equal(proposedRisk('B', at(2, 0)).pct, 0);                    // plain B: never
   assert.equal(proposedRisk('C', at(1, 8)).pct, 0);
 });
 
@@ -249,4 +258,34 @@ test('playbook countdowns', async () => {
   assert.equal(countdown(at, at - 5 * 60_000), 'in 5m');
   assert.equal(countdown(at, at + 60_000), 'now');
   assert.equal(countdown(at, at + 10 * 60_000), 'done');
+});
+
+test('trade results with the scaling plan', async () => {
+  const { scaledResult } = await import('../public/sfp.js');
+  const c = (t, o, h, l, cl) => ({ t, o, h, l, c: cl });
+  const trade = { entry: 100, sl: 99, tp: 110 }, sig = c(0, 100, 100, 99, 100);
+  // both adds fill (101, 102), then the target: 10 + 9 + 0.5 × 8 = 23R
+  const win = scaledResult([sig, c(1, 100, 101.5, 100, 101.5), c(2, 101.5, 102.5, 101, 102.4), c(3, 102.4, 110.5, 102, 110)], 0, trade, false);
+  assert.equal(win.result, 'win'); assert.equal(win.R, 23); assert.equal(win.rr, 23); assert.equal(win.adds, 2);
+  assert.ok(win.net < 23 && win.net > 22.5);
+  // add 1 fills, then back to the entry: the add loses its 1R
+  const entry = scaledResult([sig, c(1, 100, 101.5, 100, 101.5), c(2, 101.5, 101.6, 99.8, 100)], 0, trade, false);
+  assert.equal(entry.result, 'entry'); assert.equal(entry.R, -1);
+  // straight to the stop; and a short that hasn't ended
+  assert.equal(scaledResult([sig, c(1, 100, 100.5, 98.9, 99)], 0, trade, false).result, 'loss');
+  const open = scaledResult([c(0, 100, 101, 100, 100), c(1, 100, 100.5, 99.5, 99)], 0, { entry: 100, sl: 101, tp: 90 }, true);
+  assert.equal(open.result, 'open'); assert.equal(open.R, 1); assert.equal(open.net, null);
+});
+
+test('RSI (Wilder, 14) and the B+ stretch', async () => {
+  const { rsi, rsiStretched } = await import('../public/sfp.js');
+  const up = Array.from({ length: 30 }, (_, i) => ({ c: 100 + i }));
+  assert.equal(rsi(up)[13], null);
+  assert.equal(rsi(up)[14], 100);                                      // only gains
+  const zig = Array.from({ length: 40 }, (_, i) => ({ c: 100 + (i % 2 ? 1 : -1) }));
+  assert.ok(Math.abs(rsi(zig).at(-1) - 50) < 5);                       // even gains and losses ≈ 50
+  const down = Array.from({ length: 30 }, (_, i) => ({ c: 130 - i }));
+  assert.equal(rsi(down).at(-1), 0);
+  assert.ok(rsiStretched('Long', 39) && !rsiStretched('Long', 41) && rsiStretched('Short', 61) && !rsiStretched('Short', 59));
+  assert.ok(!rsiStretched('Long', null));
 });

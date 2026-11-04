@@ -1,11 +1,27 @@
 // Signal charts: the 4h candle cache (IndexedDB, so a reload only fetches what
 // has closed since) and the replay window for one signal, with its levels, the
 // trade and the scaling plan drawn, and a plain-English trade guide.
-import { scalePlan, closedOnly, H4 } from './sfp.js';
+import { scalePlan, closedOnly, H4, TAKER_FEE, MAKER_FEE } from './sfp.js';
 import { idbGet, idbSet } from './db.js';
 import { proposedRisk } from './day-playbook.js';
 
 let ctx = null;
+
+// Which result the Signals page shows: the full scaling plan (default) or the
+// first entry alone. Remembered per browser.
+const ADDS_KEY = 'perp-dojo:signal-adds';
+export const adds = { on: true };
+try { adds.on = localStorage.getItem(ADDS_KEY) !== 'off'; } catch {}
+export const setAdds = on => { adds.on = on; try { localStorage.setItem(ADDS_KEY, on ? 'on' : 'off'); } catch {} };
+// A trade's outcome in the current mode: result (win, loss, entry, be, open),
+// R before fees, net after fees (null while open), when it ended, adds filled,
+// and rr, what it makes at the target. In R of the first entry's risk.
+export function outcomeOf(t) {
+  if (!t) return null;
+  if (adds.on && t.scaled) return t.scaled;
+  const net = t.result === 'open' ? null : t.R - (TAKER_FEE + (t.result === 'win' ? MAKER_FEE : TAKER_FEE)) / t.riskPct;
+  return { result: t.result, R: t.R, net, exitT: t.exitT, adds: 0, rr: t.rr };
+}
 // the page hands over apiJson, price formatting and the replay window once
 export const bindCharts = c => { if (!ctx) ctx = c; };
 
@@ -57,7 +73,8 @@ export function chartItem(s) {
   const short = s.side === 'Short', tr = s.trade, p = ctx.fmt.price;
   const firstSwing = Math.min(...s.levels.map(l => l.t), tr ? tr.tpT : Infinity);
   // the chart runs to where the trade ended (or now, if it's still open)
-  const end = tr ? (tr.exitT ?? Math.floor(Date.now() / H4) * H4) : s.t;
+  const o = outcomeOf(tr);
+  const end = tr ? (o.exitT ?? Math.floor(Date.now() / H4) * H4) : s.t;
   const plan = scalePlan(tr, s.side);                          // adds at +1R and +2R, stops stepped up behind them
   // the break-even stop to the entry's precision (rounded toward the safe side)
   if (plan?.adds[1]) { const dec = (p(tr.entry).replace(/,/g, '').split('.')[1] || '').length, k = 10 ** dec; plan.adds[1].stop = (short ? Math.floor : Math.ceil)(plan.adds[1].stop * k) / k; }
@@ -83,9 +100,14 @@ export function chartItem(s) {
       : `If price gets to **${p(a.price)}** (+2R), add half your entry size${pr?.pct ? sizeText(0.5) : ''} and move all stops to break-even for the whole position, **${p(a.stop)}**.`);
     steps.push(`Take everything off at **${p(tr.tp)}**, the opposing level the move started from: ${tr.rr.toFixed(1)}R on the first entry${plan?.adds.length ? `, ${rText(plan.R)} with the adds` : ''}.`);
   } else steps.push('No trade: there’s no opposing level beyond the entry to aim for.');
-  const outcome = !tr ? null : tr.result === 'win' ? { text: `Target hit after ${Math.round((tr.exitT - s.t) / H4)} candles: ${rText(tr.R)} on the first entry.`, cls: 'pos' }
-    : tr.result === 'loss' ? { text: `Stopped out after ${Math.round((tr.exitT - s.t) / H4)} candles: −1R.`, cls: 'neg' }
-    : { text: `Still open: ${rText(tr.R)} at the last close.`, cls: '' };
+  const n = o?.exitT ? Math.round((o.exitT - s.t) / H4) : 0;
+  const outcome = !tr ? null
+    : o.result === 'win' ? { text: `Target hit after ${n} candles: ${rText(o.R)}${adds.on && o.adds ? ` with the adds (${rText(tr.R)} on the first entry)` : ' on the first entry'}.`, cls: 'pos' }
+    : o.result === 'loss' ? { text: `Stopped out after ${n} candles: −1R.`, cls: 'neg' }
+    : o.result === 'entry' ? { text: `Stopped at the entry after add 1, ${n} candles in: ${rText(o.R)}. The first entry broke even; the add lost its 1R.`, cls: 'neg' }
+    : o.result === 'be' ? { text: `Stopped at break-even after both adds, ${n} candles in: ${rText(o.R)}.`, cls: o.R > 0 ? 'pos' : 'neg' }
+    : { text: `Still open: ${rText(o.R)} at the last close${adds.on && o.adds ? ` with ${o.adds === 1 ? 'add 1' : 'both adds'} in` : ''}.`, cls: '' };
+  const endTip = { win: `Target hit · ${rText(o?.R ?? 0)}`, loss: 'Stopped out · −1R', entry: `Stopped at the entry · ${rText(o?.R ?? 0)}`, be: `Break-even stop · ${rText(o?.R ?? 0)}` }[o?.result];
   const context = [
     s.grade ? `Grade ${s.grade.grade}: ${s.grade.why}` : null,
     [5, 6, 0].includes(new Date(s.t + H4).getDay()) ? 'Weekend setup: half size or skip' : null,
@@ -122,7 +144,7 @@ export function chartItem(s) {
         ...s.levels.map(l => ({ t: l.t, position: short ? 'aboveBar' : 'belowBar', shape: 'circle', color: 'ink', tip: [`Swing ${short ? 'high' : 'low'} · level ${p(l.price)}`, new Date(l.t).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })] })),
         ...(tr ? [{ t: tr.tpT, position: short ? 'belowBar' : 'aboveBar', shape: 'circle', color: 'ink', tip: [`Opposing swing ${short ? 'low' : 'high'} · target ${p(tr.tp)}`] }] : []),
         { t: s.t, position: short ? 'aboveBar' : 'belowBar', shape: short ? 'arrowDown' : 'arrowUp', color: short ? 'neg' : 'pos', tip: [`SFP ${s.side.toLowerCase()} · entry ${p(s.close)}`, `Wick ${p(short ? s.high : s.low)} is the stop`] },
-        ...(tr?.exitT ? [{ t: tr.exitT, position: tr.result === 'win' ? (short ? 'belowBar' : 'aboveBar') : (short ? 'aboveBar' : 'belowBar'), shape: 'square', color: tr.result === 'win' ? 'pos' : 'neg', tip: [tr.result === 'win' ? `Target hit · ${rText(tr.R)}` : 'Stopped out · −1R'] }] : []),
+        ...(o?.exitT ? [{ t: o.exitT, position: o.result === 'win' ? (short ? 'belowBar' : 'aboveBar') : (short ? 'aboveBar' : 'belowBar'), shape: 'square', color: o.R > 0 ? 'pos' : 'neg', tip: [endTip] }] : []),
       ],
       note: 'Entry at the signal candle’s close, stop at its wick, target at the opposing swing level the move started from. The position is drawn to the right of the candles: red is the risk, the other zone the reward. Circles mark the swing candles; the square marks where the trade ended.',
     },

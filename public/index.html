@@ -22,6 +22,7 @@
       <button type="button" data-view="journal"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3.5 1.5h7l2 2v11h-9z"/><path d="M5.5 6h5M5.5 8.5h5M5.5 11h3"/></svg>Journal</button>
       <button type="button" data-view="review"><svg viewBox="0 0 16 16" aria-hidden="true"><rect x="1.5" y="2.5" width="13" height="12" rx="2"/><path d="M1.5 6.5h13M5 1v3M11 1v3M4.5 11l2 1.5 4-4"/></svg>Weekly review</button>
       <button type="button" data-view="reports"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 1.5h5.5L13 5v9.5H4z"/><path d="M9.5 1.5V5H13M6.5 8.5h4M6.5 11h4"/></svg>Reports</button>
+      <button type="button" data-view="strategy"><svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6.5"/><circle cx="8" cy="8" r="3.5"/><circle cx="8" cy="8" r="0.6"/></svg>Strategy</button>
       <button type="button" data-view="playbook"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 2.5h4.5a1.5 1.5 0 0 1 1.5 1.5v9.5a1 1 0 0 0-1-1h-5z"/><path d="M13.5 2.5H9A1.5 1.5 0 0 0 7.5 4v9.5a1 1 0 0 1 1-1h5z"/></svg>Playbook</button>
       <button type="button" data-view="wizard"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 4.5 4 6l2.5-3M2.5 10.5 4 12l2.5-3M8.5 4.5h5M8.5 10.5h5"/></svg>Entry wizard</button>
       <button type="button" data-view="trades"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2 3.5h12M2 8h12M2 12.5h12"/></svg>Trades</button>
@@ -201,7 +202,7 @@
 
         <div id="sigCard" class="card c6 accented sig-card" style="--a: var(--a3)">
           <div class="card-row">
-            <div class="kicker">Latest signals <button class="info" type="button" data-info="4h swing failure signals on your 54-pair watchlist, with the same rules and filters as the Telegram alerts (Balanced). The latest three, with BTC's 4h trend at the time and the move 24 hours later (or so far, if younger). Click one to see it on the chart, or open Signals for all of them.">i</button></div>
+            <div class="kicker">Latest signals <button class="info" type="button" data-info="4h swing failure signals on your 63-pair watchlist, with the same rules and filters as the Telegram alerts (Balanced). The latest three, with BTC's 4h trend at the time and the move 24 hours later (or so far, if younger). Click one to see it on the chart, or open Signals for all of them.">i</button></div>
             <div class="sig-head-right"><a class="more-link" href="#signals">All signals</a></div>
           </div>
           <div id="sigLatest" class="sig-grid"></div>
@@ -595,6 +596,9 @@
         </div>
       </section>
 
+      <!-- ===================== STRATEGY ===================== -->
+      <section id="view-strategy" class="grid st-page" hidden></section>
+
       <!-- ===================== ENTRY WIZARD ===================== -->
       <section id="view-wizard" class="grid" hidden>
         <div class="card c7 accented wz-card" style="--a: var(--a2)">
@@ -676,7 +680,7 @@
           <div class="card-row">
             <div>
               <h2>Every swing failure signal</h2>
-              <p class="sub">4h swing failures on your 54-pair watchlist, with the same rules and filters as the Telegram alerts. Closed 4h candles only. Each is scored as a trade: entry at the signal candle's close, stop at its wick, target at the opposing swing level the move started from, whichever is hit first (a candle that touches both counts as the stop). Results are in R, before and after Bybit's standard fees. Click a row to see the trade on the chart.</p>
+              <p class="sub">4h swing failures on your 63-pair watchlist, with the same rules and filters as the Telegram alerts. Closed 4h candles only. Each is scored as a trade: entry at the signal candle's close, stop at its wick, target at the opposing swing level the move started from, whichever is hit first (a candle that touches both counts as the stop). Results are in R, before and after Bybit's standard fees. Click a row to see the trade on the chart.</p>
             </div>
             <div class="sig-head-right">
               <select id="sigPeriod" aria-label="Period"><option value="90">Last 90 days</option><option value="180">Last 180 days</option><option value="365">Last year</option></select>
@@ -700,6 +704,7 @@
               <select id="sigSide" aria-label="Side"><option value="all">Longs and shorts</option><option value="Long">Longs</option><option value="Short">Shorts</option></select>
               <div id="sigGradeF" class="grade-checks" role="group" aria-label="Grades"></div>
               <select id="sigTrendF" aria-label="BTC trend"><option value="all">Any BTC trend</option><option value="aligned">Aligned with BTC</option><option value="counter">Countertrend</option><option value="neutral">BTC neutral</option></select>
+              <select id="sigMode" aria-label="Results" title="Results with the scaling plan (adds at +1R and +2R, stops to entry, then break-even) or the first entry alone"><option value="adds">With adds</option><option value="first">First entry only</option></select>
             </div>
           </div>
           <div class="table-wrap"><table id="sigTable" class="data"></table></div>

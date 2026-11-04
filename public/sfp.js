@@ -27,9 +27,9 @@ export const H4 = 4 * 3_600_000;
 export const SFP_DEFAULTS = { left: 3, right: 3, minAge: 12, lookbackDays: 90, breakOnClose: true, once: true, edge: 0.25, rangeDays: 7, outermost: false, minSweep: 0 };
 // Your Bybit watchlist (USDT perps; Bybit lists BONK and PEPE as 1000BONK and 1000PEPE).
 export const DEFAULT_PAIRS = 'ETH SOL 1000BONK WIF 1000PEPE FARTCOIN USELESS BRETT CASHCAT TRUMP PONS DOGE STRK JUP PENDLE UNI ALGO WLD AAVE AERO ZK VVV HYPE MNT ARB ' +
-  'ZETA PUMPFUN LINK NEAR ETHFI ZEC TAO SUI BARD LIT AVAX MEGA OPG SLX XMR ZRO ENA ADA AKE XRP XPL LINEA ONDO GWEI SKR 0G BNB RUNE TRX';
+  'ZETA PUMPFUN LINK NEAR ETHFI ZEC TAO SUI BARD LIT AVAX MEGA OPG SLX XMR ZRO ENA ADA AKE XRP XPL LINEA ONDO GWEI SKR 0G BNB RUNE TRX LTC CLANKER DGAI GRAM ICNT BMT DOT KAS POL';
 // Added to the default after people had saved lists; saved lists get them too.
-export const ADDED_PAIRS = ['BNB', 'RUNE', 'TRX'];
+export const ADDED_PAIRS = ['BNB', 'RUNE', 'TRX', 'LTC', 'CLANKER', 'DGAI', 'GRAM', 'ICNT', 'BMT', 'DOT', 'KAS', 'POL'];
 // The first list, kept so saved scanner settings still on it move to the new one.
 export const OLD_DEFAULT_PAIRS = 'VVV HYPE STRK AAVE AERO JUP UNI ALGO LINK NEAR ETHFI ZEC SUI LIT AVAX WLD ONDO PENDLE ENA ZK MNT';
 // Presets for how hard to filter. Balanced is the scanner's default (it tested
@@ -165,15 +165,49 @@ export function tradePlan(candles, k, short, levels, swingList) {
   if (short ? tp >= entry : tp <= entry) return null;
   const rr = Math.abs(entry - tp) / risk;
   const plan = { entry, sl, tp, tpT: target.t, rr, riskPct: risk / entry, result: 'open', R: null, exitT: null };
+  const scaled = scaledResult(candles, k, plan, short);
   for (let j = k + 1; j < candles.length; j++) {
     const x = candles[j];
     const stopped = short ? x.h >= sl : x.l <= sl, hit = short ? x.l <= tp : x.h >= tp;
-    if (stopped) return { ...plan, result: 'loss', R: -1, exitT: x.t };
-    if (hit) return { ...plan, result: 'win', R: rr, exitT: x.t };
+    if (stopped) return { ...plan, result: 'loss', R: -1, exitT: x.t, scaled };
+    if (hit) return { ...plan, result: 'win', R: rr, exitT: x.t, scaled };
   }
   // still open: where it stands at the last close, in R
   const last = candles.at(-1);
-  return { ...plan, R: k < candles.length - 1 ? (short ? entry - last.c : last.c - entry) / risk : 0 };
+  return { ...plan, R: k < candles.length - 1 ? (short ? entry - last.c : last.c - entry) / risk : 0, scaled };
+}
+
+// Bybit's standard fees: market orders in and at the stop, a limit at the target.
+export const TAKER_FEE = 0.00055, MAKER_FEE = 0.0002;
+// The same trade run with the scaling plan (scalePlan, below): adds at +1R and
+// +2R, stops to the entry after the first and to the whole position's
+// break-even after the second. An add hit during a candle counts from the next
+// one, and a candle that touches the stop and the target counts as the stop.
+// `R` and `net` (after fees) are in units of the first entry's risk; `rr` is
+// what the full plan makes at the target. result: 'win' (target), 'loss' (the
+// wick stop), 'entry' (stopped at the entry after add 1), 'be' (stopped at
+// break-even after add 2) or 'open'.
+export function scaledResult(candles, k, trade, short) {
+  const { entry, sl, tp } = trade, dir = short ? -1 : 1, risk = Math.abs(entry - sl);
+  const sp = scalePlan(trade, short ? 'Short' : 'Long');
+  const legs = [{ px: entry, size: 1 }];
+  const out = (result, px, exitT, fee) => {
+    const R = legs.reduce((n, l) => n + l.size * (px - l.px) * dir, 0) / risk;
+    const fees = legs.reduce((n, l) => n + l.size * (TAKER_FEE * l.px + fee * px), 0) / risk;
+    return { result, R, net: result === 'open' ? null : R - fees, exitT, adds: legs.length - 1, rr: sp.R };
+  };
+  let stop = sl, next = 0;
+  for (let j = k + 1; j < candles.length; j++) {
+    const x = candles[j], adverse = short ? x.h : x.l, favour = short ? x.l : x.h;
+    if (dir * (adverse - stop) <= 0) return out(next === 0 ? 'loss' : next === 1 ? 'entry' : 'be', stop, x.t, TAKER_FEE);
+    if (dir * (favour - tp) >= 0) return out('win', tp, x.t, MAKER_FEE);
+    while (next < sp.adds.length && dir * (favour - sp.adds[next].price) >= 0) {
+      const a = sp.adds[next++];
+      legs.push({ px: a.price, size: a.size });
+      stop = a.stop;
+    }
+  }
+  return out('open', candles.at(-1).c, null, 0);
 }
 
 // What price did next: the move in your favor after 1, 3 and 6 candles, and
@@ -291,10 +325,14 @@ export function smt(sig, alt, btc, { ref = 32, ms = H4, type = 'strength' } = {}
 // (54 pairs, wick stop, opposing-level target, fees; avg R per trade):
 //   A+  with yesterday's NY bias, outside the NY session, BTC swept the same way   +1.04R
 //   A   with the bias outside the session, or with it + BTC sweep in the session   +0.41R
+//   B+  a B whose 4h RSI is stretched the trade's way (long < 40, short > 60)       +0.73R with adds
 //   B   with the bias but during the NY session (the bias may be going stale)       +0.02R
 //   C   against the bias, or no bias known                                         −0.13R
-// ny: { bias: 'bullish'|'bearish'|'flat'|null, during: bool }; swept: BTC's own SFP, same side, same candle.
-export function gradeSetup(side, { ny, swept = false } = {}) {
+// ny: { bias: 'bullish'|'bearish'|'flat'|null, during: bool }; swept: BTC's own SFP, same side, same candle;
+// rsi: the pair's 4h RSI(14) at the signal close (see rsi()), optional.
+export const BPLUS_RSI = 40;
+export const rsiStretched = (side, r) => r != null && Number.isFinite(r) && (side === 'Short' ? r > 100 - BPLUS_RSI : r < BPLUS_RSI);
+export function gradeSetup(side, { ny, swept = false, rsi = null } = {}) {
   const dir = side === 'Short' ? 'bearish' : 'bullish';
   const mark = ny?.bias === 'bullish' ? '▲' : ny?.bias === 'bearish' ? '▼' : '';
   if (!ny?.bias || ny.bias === 'flat') return { grade: 'C', why: 'no NY bias to go with' };
@@ -302,9 +340,22 @@ export function gradeSetup(side, { ny, swept = false } = {}) {
   const sw = swept ? ', BTC swept too' : '';
   if (!ny.during) return { grade: swept ? 'A+' : 'A', why: `with the NY bias ${mark}${sw}` };
   if (swept) return { grade: 'A', why: `with the NY bias ${mark}${sw}, NY session open` };
+  if (rsiStretched(side, rsi)) return { grade: 'B+', why: `with the NY bias ${mark}, NY session open, 4h RSI ${Math.round(rsi)} (stretched)` };
   return { grade: 'B', why: `with the NY bias ${mark}, but the NY session is open` };
 }
-export const GRADE_ORDER = ['A+', 'A', 'B', 'C'];
+export const GRADE_ORDER = ['A+', 'A', 'B+', 'B', 'C'];
+
+// Wilder's RSI over `n` candles (as TradingView draws it): one value per candle, null until there are n changes.
+export function rsi(candles, n = 14) {
+  const out = new Array(candles.length).fill(null);
+  let g = 0, l = 0;
+  for (let i = 1; i < candles.length; i++) {
+    const d = candles[i].c - candles[i - 1].c, up = Math.max(d, 0), dn = Math.max(-d, 0);
+    if (i <= n) { g += up / n; l += dn / n; } else { g = (g * (n - 1) + up) / n; l = (l * (n - 1) + dn) / n; }
+    if (i >= n) out[i] = l === 0 ? 100 : 100 - 100 / (1 + g / l);
+  }
+  return out;
+}
 
 // The scaling plan for a trade, as backtested on A and A+ setups:
 //   add 1 at +1R (same size as the entry); all stops → the entry

@@ -19,8 +19,8 @@ const DAYS = [
 ];
 // The three closes you trade, rated per weekday (Sun..Sat) from A/A+ results at
 // that close: prime = clearly the best, ok = positive, weak = lost money.
-const SESSION = [8, 12, 16];
-const SLOTS = [
+export const SESSION = [8, 12, 16];
+export const SLOTS = [
   ['weak', 'weak', 'weak'],    // Sun
   ['prime', 'ok', 'ok'],       // Mon
   ['prime', 'ok', 'ok'],       // Tue
@@ -34,7 +34,13 @@ export const MAX_POSITIONS = 5;
 
 // Risk per trade, % of account equity, by grade. Half on a weak close; nothing
 // outside the trading day. Change the numbers here.
-export const RISK_PCT = { 'A+': 2, A: 1, B: 0.5, C: 0 };
+export const RISK_PCT = { 'A+': 2, A: 1, 'B+': 0.5, B: 0.5, C: 0 };
+// Outside the trading day, Monday to Thursday's 20:00, 00:00 and 04:00 closes
+// take A+ only, at a quarter percent: in the backtest these broke even to
+// slightly positive (+0.79R a trade on 43, thin), so it's tracking, not income.
+// B+ (a B with a stretched 4h RSI) joins them at 00:00 and 04:00, not 20:00: +1.08R a trade on 202
+// over the year at those closes, Mon–Thu, but −0.62R at 20:00, losing in both halves.
+export const OFF_HOURS = [20, 0, 4], OFF_HOURS_PCT = 0.25, BPLUS_HOURS = [0, 4];
 // The proposed risk for a setup whose 4h candle closes at `closeAt` (ms):
 // { pct, slot, why } with slot 'prime' | 'ok' | 'weak' | null (outside hours).
 export function proposedRisk(grade, closeAt) {
@@ -42,15 +48,21 @@ export function proposedRisk(grade, closeAt) {
   const slot = i < 0 || t.getMinutes() ? null : SLOTS[t.getDay()][i];
   const base = RISK_PCT[grade] ?? 0;
   if (!base) return { pct: 0, slot, why: `grade ${grade}: skip` };
-  if (!slot) return { pct: 0, slot, why: 'outside your trading hours (08:00, 12:00, 16:00 closes): skip' };
-  if (slot === 'weak') return grade === 'B' ? { pct: 0, slot, why: 'grade B on a weak close: skip' } : { pct: base / 2, slot, why: `grade ${grade} on a weak close: half size` };
+  if (!slot) {
+    const off = !t.getMinutes() && OFF_HOURS.includes(t.getHours()) && t.getDay() >= 1 && t.getDay() <= 4;
+    if (off && grade === 'A+') return { pct: OFF_HOURS_PCT, slot, why: 'A+ outside the main closes (Mon–Thu): a quarter percent, for tracking' };
+    if (off && grade === 'B+' && BPLUS_HOURS.includes(t.getHours())) return { pct: OFF_HOURS_PCT, slot, why: 'B+ at a late close (Mon–Thu): a quarter percent, for tracking' };
+    if (off && grade === 'B+') return { pct: 0, slot, why: 'B+ at 20:00 lost money in the backtest: skip (only 00:00 and 04:00)' };
+    return { pct: 0, slot, why: off ? 'outside the main closes, only A+ (and B+ at 00:00 / 04:00) is taken here, at 0.25%: skip' : 'outside your trading hours (08:00, 12:00, 16:00 closes): skip' };
+  }
+  if (slot === 'weak') return grade === 'B' || grade === 'B+' ? { pct: 0, slot, why: `grade ${grade} on a weak close: skip` } : { pct: base / 2, slot, why: `grade ${grade} on a weak close: half size` };
   return { pct: base, slot, why: `grade ${grade} at a ${slot === 'prime' ? 'prime' : 'good'} close` };
 }
 const NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 const VERDICT = { strong: 'Strong day', mixed: 'Mixed day', weak: 'Weak day' };
 const ALWAYS = [
-  ['Hours', 'Trade 8 AM to 4 PM: only the 08:00, 12:00 and 16:00 closes. No trades between closes, none at 20:00, 00:00 or 04:00.'],
-  ['Grades', 'Take A and A+. B only if it’s clean, at half size. Skip C.'],
+  ['Hours', 'Trade 8 AM to 4 PM: only the 08:00, 12:00 and 16:00 closes. No trades between closes. At 20:00, 00:00 and 04:00 (Mon–Thu) take A+ only, plus B+ at 00:00 and 04:00, all at 0.25%. Nothing outside the main closes on Fri–Sun.'],
+  ['Grades', 'Trade A+ and A. B+ (a B with the 4h RSI under 40 for a long, over 60 for a short) at the late closes above. Be cautious with plain B: it lost money in the backtest. Mostly avoid C: trading against yesterday’s NY bias had no edge.'],
   ['Entry', 'At the 4h close, stop at the wick, target at the opposing level.'],
   ['Scale in', 'At +1R add the same size and move all stops to your entry. At +2R add half size and move all stops to break-even.'],
   ['Never', 'Average down, take profit early, or move a stop further away.'],
@@ -108,9 +120,17 @@ export function renderPlaybook(root, { now = new Date(), nyLive = false, equity 
     slots.append(chip);
   });
 
+  // tonight's late closes: A+ only at a quarter percent, when the close falls Mon–Thu
+  // (20:00 is today; 00:00 and 04:00 close tomorrow)
+  const lateOk = h => { const day = h === 20 ? d : (d + 1) % 7; return day >= 1 && day <= 4; };
+  const late = OFF_HOURS.filter(lateOk), lateChip = el('span', 'pb-slot late' + (late.length ? '' : ' off'));
+  lateChip.append(el('b', '', late.length ? late.map(hh).join(' · ') : 'Late closes'), el('span', '', late.length ? `A+${late.some(h => BPLUS_HOURS.includes(h)) ? ', B+ at ' + late.filter(h => BPLUS_HOURS.includes(h)).map(hh).join(' / ') : ' only'} · ${pctText(OFF_HOURS_PCT)}` : 'no new trades'));
+  lateChip.title = late.length ? 'Outside the main closes, Monday to Thursday: A+ setups, and B+ at 00:00 and 04:00, at 0.25% risk (for tracking, not income)' : 'No new trades outside the main closes on Friday to Sunday';
+  slots.append(el('span', 'pb-slots-sep', 'then'), lateChip);
+
   const list = el('ul', 'pb-tips');
   for (const t of tips) list.append(el('li', '', t));
-  if (nyLive) list.append(el('li', 'pb-live', 'The NY session is open right now: new setups grade B at best until it closes.'));
+  if (nyLive) list.append(el('li', 'pb-live', 'The NY session is open right now: new setups grade B or B+ at best until it closes (A with a BTC sweep).'));
 
   const rules = el('details', 'pb-rules'), sum = el('summary');
   try { rules.open = localStorage.getItem(OPEN_KEY) === '1'; } catch {}

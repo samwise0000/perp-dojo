@@ -129,6 +129,10 @@ test('each setup gets a grade with the reason', async () => {
   assert.equal(gradeSetup('Short', { ny: bear }).grade, 'A');
   assert.equal(gradeSetup('Short', { ny: { ...bear, during: true }, swept: true }).grade, 'A');
   assert.equal(gradeSetup('Short', { ny: { ...bear, during: true } }).grade, 'B');
+  assert.equal(gradeSetup('Short', { ny: { ...bear, during: true }, rsi: 64 }).grade, 'B+');   // stretched the short's way
+  assert.equal(gradeSetup('Short', { ny: { ...bear, during: true }, rsi: 36 }).grade, 'B');    // stretched the wrong way
+  assert.equal(gradeSetup('Long', { ny: { bias: 'bullish', during: true }, rsi: 33 }).grade, 'B+');
+  assert.equal(gradeSetup('Short', { ny: bear, rsi: 80 }).grade, 'A');                         // RSI only lifts B
   assert.equal(gradeSetup('Long', { ny: bear, swept: true }).grade, 'C');
   assert.equal(gradeSetup('Long', {}).grade, 'C');
   const sig = (side, close = 100) => ({ side, close, line: 99, inside: 0.01, levels: [{ price: 99 }], range: {} });
