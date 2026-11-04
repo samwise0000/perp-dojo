@@ -9,13 +9,13 @@
 // broke even or lost once a few outliers were removed.
 const DAYS = [
   // [verdict, avg R, win rate, share of days with an A/A+ setup, advice]
-  ['weak', -0.32, 19, 85, ['Setups lost money on Sundays: half size or skip new ones.', 'One of the busiest days for setups, so it’s easy to get pulled in. Wait for the week.', 'Hold anything already running from the week.']],
-  ['mixed', 0.41, 28, 87, ['The busiest day: there’s an A/A+ setup on most Mondays, often several at once.', 'Only modestly profitable, so be selective and stay under your position cap.', 'The 08:00 close is where Monday’s profit came from.']],
-  ['strong', 3.47, 44, 56, ['The best day in the backtest: 44% of A/A+ trades hit the target.', 'Take A and A+ setups with confidence, full plan.', 'Hold to the opposing level. The big winners pay for everything.']],
-  ['strong', 3.91, 32, 57, ['A strong day, carried by some very large winners.', 'Take A and A+ setups with the full plan.', 'Hold to the target; don’t cut winners early.']],
-  ['strong', 1.68, 38, 67, ['Solid and steady, positive in both halves of the year.', 'Trades opened now often run into the weekend, and those were the biggest winners.', 'Hold them through the weekend if they’re working.']],
-  ['weak', -0.47, 26, 56, ['New setups opened on Fridays lost money: half size or skip.', 'Hold your runners. Trades already open going into the weekend were the biggest winners.', 'Don’t close winners just because the weekend is coming.']],
-  ['weak', -0.56, 15, 65, ['The weakest day: only 15% of A/A+ trades hit the target.', 'Skip new setups, or half size at most.', 'Hold anything already running and leave the stops where the plan puts them.']],
+  ['weak', -0.32, 19, 85, ['Setups lost money on Sundays: half size or skip new ones.', 'One of the busiest days for setups, so it’s easy to get pulled in. Wait for the week.', 'Hold anything already running from the week.', 'Monday’s 08:00 close is the first prime slot of the week.']],
+  ['mixed', 0.41, 28, 87, ['The busiest day: there’s an A/A+ setup on most Mondays, often several at once.', 'Only modestly profitable, so be selective and stay under your position cap.', 'The 08:00 close is where Monday’s profit came from.', 'Skip the 20:00, 00:00 and 04:00 closes even when a setup looks good.']],
+  ['strong', 3.47, 44, 56, ['The best day in the backtest: 44% of A/A+ trades hit the target.', 'Take A and A+ setups with confidence, full plan.', 'Hold to the opposing level. The big winners pay for everything.', 'The 12:00 close was strong on Tuesdays too.']],
+  ['strong', 3.91, 32, 57, ['A strong day, carried by some very large winners.', 'Take A and A+ setups with the full plan.', 'Hold to the target; don’t cut winners early.', 'The 08:00 close made most of Wednesday’s profit.']],
+  ['strong', 1.68, 38, 67, ['Solid and steady, positive in both halves of the year.', 'Trades opened now often run into the weekend, and those were the biggest winners.', 'Hold them through the weekend if they’re working.', 'Skip the 16:00 close: it lost money on Thursdays.']],
+  ['weak', -0.47, 26, 56, ['New setups opened on Fridays lost money: half size or skip.', 'Hold your runners. Trades already open going into the weekend were the biggest winners.', 'Don’t close winners just because the weekend is coming.', 'If you trade at all, only A+ at half size.']],
+  ['weak', -0.56, 15, 65, ['The weakest day: only 15% of A/A+ trades hit the target.', 'Skip new setups, or half size at most.', 'Hold anything already running and leave the stops where the plan puts them.', 'A good day to review the week’s trades and journal.']],
 ];
 // The three closes you trade, rated per weekday (Sun..Sat) from A/A+ results at
 // that close: prime = clearly the best, ok = positive, weak = lost money.
@@ -30,6 +30,22 @@ const SLOTS = [
   ['weak', 'weak', 'weak'],    // Sat
 ];
 const SLOT_TEXT = { prime: 'Prime', ok: 'OK', weak: 'Weak' };
+export const MAX_POSITIONS = 5;
+
+// Risk per trade, % of account equity, by grade. Half on a weak close; nothing
+// outside the trading day. Change the numbers here.
+export const RISK_PCT = { 'A+': 2, A: 1, B: 0.5, C: 0 };
+// The proposed risk for a setup whose 4h candle closes at `closeAt` (ms):
+// { pct, slot, why } with slot 'prime' | 'ok' | 'weak' | null (outside hours).
+export function proposedRisk(grade, closeAt) {
+  const t = new Date(closeAt), i = SESSION.indexOf(t.getHours());
+  const slot = i < 0 || t.getMinutes() ? null : SLOTS[t.getDay()][i];
+  const base = RISK_PCT[grade] ?? 0;
+  if (!base) return { pct: 0, slot, why: `grade ${grade}: skip` };
+  if (!slot) return { pct: 0, slot, why: 'outside your trading hours (08:00, 12:00, 16:00 closes): skip' };
+  if (slot === 'weak') return grade === 'B' ? { pct: 0, slot, why: 'grade B on a weak close: skip' } : { pct: base / 2, slot, why: `grade ${grade} on a weak close: half size` };
+  return { pct: base, slot, why: `grade ${grade} at a ${slot === 'prime' ? 'prime' : 'good'} close` };
+}
 const NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 const VERDICT = { strong: 'Strong day', mixed: 'Mixed day', weak: 'Weak day' };
 const ALWAYS = [
@@ -38,8 +54,8 @@ const ALWAYS = [
   ['Entry', 'At the 4h close, stop at the wick, target at the opposing level.'],
   ['Scale in', 'At +1R add the same size and move all stops to your entry. At +2R add half size and move all stops to break-even.'],
   ['Never', 'Average down, take profit early, or move a stop further away.'],
-  ['Size', 'Fixed dollar risk per trade, at most 5 positions open.'],
 ];
+const pctText = v => `${+v.toFixed(2)}%`;
 const OPEN_KEY = 'perp-dojo:playbook-rules';
 const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text !== undefined) e.textContent = text; return e; };
 const r = v => `${v > 0 ? '+' : v < 0 ? '−' : ''}${Math.abs(v).toFixed(2)}R`;
@@ -52,12 +68,24 @@ function nextClose(now) {
   return i < 0 ? null : { i, at: SESSION[i], now: h >= SESSION[i] };
 }
 
+// "in 1h 23m", "now" for 5 minutes after the close, then "done"
+export function countdown(at, now = Date.now()) {
+  const m = Math.ceil((at - now) / 60_000);
+  if (m <= 0) return now - at < 5 * 60_000 ? 'now' : 'done';
+  return m >= 60 ? `in ${Math.floor(m / 60)}h ${String(m % 60).padStart(2, '0')}m` : `in ${m}m`;
+}
+// Update the countdowns in place (cheap; doesn't rebuild the card).
+export function tickPlaybook(root, now = Date.now()) {
+  for (const e of root.querySelectorAll('[data-at]')) { const t = countdown(Number(e.dataset.at), now); if (e.textContent !== t) e.textContent = t; }
+}
+
 // nyLive: today's NY session is running (setups now grade B at best)
-export function renderPlaybook(root, { now = new Date(), nyLive = false } = {}) {
+// equity: account equity in USD (null if unknown); hidden: the balance is masked
+export function renderPlaybook(root, { now = new Date(), nyLive = false, equity = null, hidden = false, money = v => `$${Math.round(v)}` } = {}) {
   const d = now.getDay(), [verdict, avg, win, share, tips] = DAYS[d], next = nextClose(now);
   // only rebuild when something shown changes: the dashboard re-renders often,
   // and rebuilding would undo an open or close the moment it happens
-  const key = `${now.toDateString()}:${nyLive}:${next ? `${next.i}${next.now}` : 'done'}`;
+  const key = `${now.toDateString()}:${nyLive}:${next ? `${next.i}${next.now}` : 'done'}:${equity === null ? '-' : Math.round(equity)}:${hidden}`;
   if (root.dataset.key === key && root.childElementCount) return;
   root.dataset.key = key;
 
@@ -72,15 +100,13 @@ export function renderPlaybook(root, { now = new Date(), nyLive = false } = {}) 
   slots.append(el('span', 'pb-slots-label', 'Trade the closes'));
   SESSION.forEach((h, i) => {
     const q = SLOTS[d][i], chip = el('span', `pb-slot ${q}` + (next?.i === i ? ' next' : '') + (next && i < next.i ? ' past' : !next ? ' past' : ''));
-    chip.append(el('b', '', hh(h)), el('span', '', SLOT_TEXT[q]));
+    const at = new Date(now); at.setHours(h, 0, 0, 0);
+    const left = el('small', 'pb-left'); left.dataset.at = at.getTime();            // the countdown, ticked by tickPlaybook
+    left.textContent = countdown(at.getTime(), now.getTime());
+    chip.append(el('b', '', hh(h)), el('span', '', SLOT_TEXT[q]), left);
     chip.title = { prime: 'The best close in the backtest', ok: 'Positive in the backtest', weak: 'Lost money in the backtest: half size or skip' }[q];
     slots.append(chip);
   });
-  const status = !next ? 'Done for today: the next trades are at the 08:00 close tomorrow.'
-    : next.now ? `The ${hh(next.at)} close is now: check the alerts.`
-    : next.i === 0 ? `Before the trading day: it starts at the 08:00 close (${SLOT_TEXT[SLOTS[d][0]].toLowerCase()}).`
-    : `Between closes: no new trades. Next is ${hh(next.at)} (${SLOT_TEXT[SLOTS[d][next.i]].toLowerCase()}).`;
-  slots.append(el('span', 'pb-slot-status muted small', status));
 
   const list = el('ul', 'pb-tips');
   for (const t of tips) list.append(el('li', '', t));
@@ -93,10 +119,55 @@ export function renderPlaybook(root, { now = new Date(), nyLive = false } = {}) 
   label();
   rules.append(sum);
   const dl = el('dl');
-  for (const [k, v] of ALWAYS) { const row = el('div'); row.append(el('dt', '', k), el('dd', '', v)); dl.append(row); }
+  // risk per grade, in dollars from the current equity
+  const dollars = g => (equity && !hidden ? ` (${money(equity * RISK_PCT[g] / 100)})` : '');
+  const risk = `A+ ${pctText(RISK_PCT['A+'])}${dollars('A+')} · A ${pctText(RISK_PCT.A)}${dollars('A')} · B ${pctText(RISK_PCT.B)}${dollars('B')} of equity per trade, half on a weak close. At most 5 positions open.`;
+  for (const [k, v] of [...ALWAYS, ['Risk', risk + (equity === null ? ' Connect your account to see it in dollars.' : '')]]) { const row = el('div'); row.append(el('dt', '', k), el('dd', '', v)); dl.append(row); }
   rules.append(dl);
 
   root.replaceChildren(head, slots, list, rules);
   root.className = 'day-playbook c12 pb-' + verdict;
   root.hidden = false;
+}
+
+// Notes for a live position, from what the backtest found:
+//   - the NY bias now vs the position (with it: hold; flipped your way since
+//     entry: keep holding; against it: weaker odds)
+//   - where it stands in the plan (next step at +1R / +2R, or protected)
+//   - Friday to Sunday: hold runners through the weekend
+// p: { dir, entry, mark, sl, slLoss, openedAt }; sessions: newest first, as nySessions returns.
+export function positionNotes(p, { sessions = [], now = new Date(), price = v => String(v), equity = null } = {}) {
+  const notes = [], long = p.dir === 'Long', side = long ? 'bullish' : 'bearish', d = long ? 1 : -1;
+  const done = (sessions || []).filter(x => !x.live && !x.missing && x.bias);
+  const nowBias = done[0]?.bias || null;
+  const atEntry = p.openedAt ? done.find(x => x.end <= p.openedAt)?.bias || null : null;
+  const mark = b => (b === 'bullish' ? '▲' : b === 'bearish' ? '▼' : '');
+  if (nowBias && nowBias !== 'flat') {
+    if (nowBias === side && atEntry && atEntry !== side) notes.push({ cls: 'pos', text: `NY flipped your way since entry ${mark(nowBias)}: keep holding` });
+    else if (nowBias === side) notes.push({ cls: 'pos', text: `With the NY bias ${mark(nowBias)}: hold to the plan` });
+    else notes.push({ cls: 'warn', text: `Against the NY bias ${mark(nowBias)}: weaker odds, consider tightening or closing` });
+  }
+  if (sessions?.[0]?.live && !sessions[0].pending) notes.push({ cls: 'muted', text: 'NY session open: the bias can change at its close' });
+  if (p.sl && p.entry && p.mark) {
+    const risk = d * (p.entry - p.sl);
+    if (risk <= 0) notes.push({ cls: 'pos', text: 'Stop at or past entry: protected, hold to the target' });
+    else {
+      const r = d * (p.mark - p.entry) / risk, at = n => price(p.entry + d * n * risk);
+      const rs = `${r >= 0 ? '+' : '−'}${Math.abs(r).toFixed(1)}R`;
+      if (r >= 2) notes.push({ cls: 'pos', text: `${rs}: past +2R, add half size and move all stops to break-even` });
+      else if (r >= 1) notes.push({ cls: 'pos', text: `${rs}: past +1R, add the same size and move all stops to entry. Next at ${at(2)} (+2R)` });
+      else notes.push({ cls: '', text: `${rs}: stop at the wick, first add at ${at(1)} (+1R)` });
+    }
+  }
+  // hold time: most stops come within 8h; trades that last longer are the ones that reach the target
+  const held = p.openedAt ? (now.getTime() - p.openedAt) / 3_600_000 : null;
+  const up = p.sl && d * (p.entry - p.sl) > 0 ? d * (p.mark - p.entry) / (d * (p.entry - p.sl)) >= 0.25 : d * (p.mark - p.entry) > 0;   // clearly in profit
+  if (held !== null && held >= 8 && p.mark && up) notes.push({ cls: 'pos', text: `Held ${held >= 48 ? Math.round(held / 24) + 'd' : Math.round(held) + 'h'} and in profit: past the usual stop-out window, let it run` });
+  // size against the plan (A 1%, A+ 2% of equity on the first entry)
+  if (equity && p.slLoss < 0 && d * (p.entry - p.sl) > 0) {
+    const pct = -p.slLoss / equity * 100;
+    if (pct > RISK_PCT['A+'] * 1.25) notes.push({ cls: 'warn', text: `Risking ${pct.toFixed(1)}% of equity to the stop: the plan's most is ${RISK_PCT['A+']}% (A+)` });
+  }
+  if ([5, 6, 0].includes(now.getDay())) notes.push({ cls: 'muted', text: 'Weekend: hold your runner, don’t close for the weekend' });
+  return notes;
 }

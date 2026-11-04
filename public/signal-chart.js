@@ -3,6 +3,7 @@
 // trade and the scaling plan drawn, and a plain-English trade guide.
 import { scalePlan, closedOnly, H4 } from './sfp.js';
 import { idbGet, idbSet } from './db.js';
+import { proposedRisk } from './day-playbook.js';
 
 let ctx = null;
 // the page hands over apiJson, price formatting and the replay window once
@@ -64,12 +65,22 @@ export function chartItem(s) {
   const coin = s.symbol.replace(/USDT$/, ''), buy = short ? 'Short' : 'Buy', beyond = short ? 'above' : 'below', toward = short ? 'down' : 'up';
   const lv = s.levels.map(l => `**${p(l.price)}**`).join(', ');
   const steps = [`The 4h candle that closed ${when(s.t)} wicked ${short ? 'above' : 'below'} ${s.levels.length > 1 ? 'the levels' : 'the level'} ${lv} and closed back ${short ? 'below' : 'above'}: a failed ${short ? 'breakout' : 'breakdown'}.`];
+  // the proposed risk: % of equity by grade and close (day-playbook.js), and the size it means
+  const pr = s.grade && tr ? proposedRisk(s.grade.grade, s.t + H4) : null;
+  const eq = ctx.equity?.(), hidden = ctx.balanceHidden?.();
+  const usd = pr && eq ? eq * pr.pct / 100 : null;
+  const qty = usd ? usd / Math.abs(tr.entry - tr.sl) : null;
+  const q = v => (v >= 100 ? Math.round(v).toLocaleString() : +v.toPrecision(3)).toString();
+  const sizeText = n => (qty && !hidden ? ` (**${q(qty * n)} ${coin}**, about ${ctx.fmt.money(qty * n * tr.entry, { sign: false, dp: 0 })})` : '');
+  if (pr) steps.push(pr.pct
+    ? `Risk **${+pr.pct.toFixed(2)}%** of your equity${usd && !hidden ? `: **${ctx.fmt.money(usd, { sign: false, dp: 0 })}**` : eq === null ? ' (connect your account to see it in dollars)' : ''}. ${pr.why[0].toUpperCase() + pr.why.slice(1)}.`
+    : `Proposed risk: **none**. ${pr.why[0].toUpperCase() + pr.why.slice(1)}. The steps below are for reference.`);
   if (tr) {
-    steps.push(`${buy} ${coin} at the close: **${p(tr.entry)}**.`);
+    steps.push(`${buy} ${coin} at the close: **${p(tr.entry)}**${pr?.pct ? sizeText(1) : ''}.`);
     steps.push(`Put your stop just ${beyond} the wick at **${p(tr.sl)}**, ${(tr.riskPct * 100).toFixed(2)}% away. That distance is 1R, your risk.`);
     for (const a of plan?.adds || []) steps.push(a.n === 1
-      ? `If price gets to **${p(a.price)}** (+1R), add the same size again and move all stops ${toward} to your entry, **${p(a.stop)}**.`
-      : `If price gets to **${p(a.price)}** (+2R), add half your entry size and move all stops to break-even for the whole position, **${p(a.stop)}**.`);
+      ? `If price gets to **${p(a.price)}** (+1R), add the same size again${pr?.pct ? sizeText(1) : ''} and move all stops ${toward} to your entry, **${p(a.stop)}**.`
+      : `If price gets to **${p(a.price)}** (+2R), add half your entry size${pr?.pct ? sizeText(0.5) : ''} and move all stops to break-even for the whole position, **${p(a.stop)}**.`);
     steps.push(`Take everything off at **${p(tr.tp)}**, the opposing level the move started from: ${tr.rr.toFixed(1)}R on the first entry${plan?.adds.length ? `, ${rText(plan.R)} with the adds` : ''}.`);
   } else steps.push('No trade: there’s no opposing level beyond the entry to aim for.');
   const outcome = !tr ? null : tr.result === 'win' ? { text: `Target hit after ${Math.round((tr.exitT - s.t) / H4)} candles: ${rText(tr.R)} on the first entry.`, cls: 'pos' }

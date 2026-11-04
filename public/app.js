@@ -1,4 +1,4 @@
-import { renderPlaybook as renderDayCard } from './day-playbook.js';
+import { renderPlaybook as renderDayCard, positionNotes, tickPlaybook, MAX_POSITIONS } from './day-playbook.js';
 import {
   summarize, groupStats, periodPnl, byWeekday, byHour, histogram, insights,
   dailyMap, dayStreaks, tradingScore, calendarMonth, scaleOf, dayKey, WEEKDAYS, warnings, WARN, dailyLoss, weekStart, weekReview,
@@ -6,7 +6,7 @@ import {
   TRADE_TAGS, tagKind, tagStats, dayRecap,
 } from './metrics.js';
 import { openReplay } from './replay.js';
-import { renderSignalsView, renderSignalsWidget } from './signals.js';
+import { renderSignalsView, renderSignalsWidget, renderCloseBreakdown } from './signals.js';
 import { nySessions, currentBias, NY_HOURS, NY_TZ } from './bias.js';
 import { normalizeAll } from './trades.js';
 import { pull } from './sync.js';
@@ -87,7 +87,7 @@ let timeBasis = store.get('timeBasis', 'open');     // Analytics timing: count t
 const THEMES = [
   { id: 'polar', name: 'Dark Polar', mode: 'dark', note: 'Gunmetal and neon', sw: ['#0d0f12', '#171a1f', '#fb923c', '#0ea5c6'] },
   { id: 'classic', name: 'Classic Light', mode: 'light', note: 'Clean and quiet', sw: ['#f4f5f7', '#ffffff', '#2563eb', '#dc3d3d'] },
-  { id: 'cream', name: 'Cream Pastel', mode: 'light', note: 'Soft paper, candy accents', sw: ['#f6efe3', '#fffaf0', '#e993b7', '#a99ae6'] },
+  { id: 'sakura', name: 'Sakura', mode: 'light', note: 'Full bloom: petals, lanterns, everything', sw: ['#fde6ee', '#ec5f8f', '#ffd1dc', '#b48ee8'] },
   { id: 'terminal', name: 'Terminal', mode: 'dark', note: 'Phosphor green, monospace', sw: ['#050805', '#0b100b', '#39ff7a', '#ffb000'] },
   { id: 'atelier', name: 'Atelier', mode: 'light', note: 'Bold ink, editorial serif', sw: ['#f3ede2', '#141414', '#f2b705', '#e2401f'] },
   { id: 'dojo', name: 'Dojo Ink', mode: 'dark', note: 'Lacquer, gold and mincho', sw: ['#12100d', '#1d1914', '#d4a24c', '#e35a43'] },
@@ -95,12 +95,140 @@ const THEMES = [
   { id: 'synthwave', name: 'Synthwave', mode: 'dark', note: 'Neon sun, endless grid', sw: ['#120a24', '#ff4fd8', '#22e5ff', '#ffd23f'] },
   { id: 'broadsheet', name: 'Broadsheet', mode: 'light', note: 'The morning paper', sw: ['#f1ece0', '#1a1a1a', '#b8322a', '#1f5fa8'] },
   { id: 'arcade', name: 'Arcade', mode: 'dark', note: '8-bit console, insert coin', sw: ['#1d2b53', '#ffec27', '#ff77a8', '#00e436'] },
+  { id: 'deepsea', name: 'Deep Sea', mode: 'dark', note: 'Bioluminescent abyss, one jellyfish', sw: ['#020a17', '#5ef2d6', '#b48cff', '#ff8ad8'] },
+  { id: 'blueprint', name: 'Blueprint', mode: 'dark', note: 'White linework on cyanotype', sw: ['#0d3a72', '#f2f8ff', '#fff27a', '#6fe3ff'] },
+  { id: 'waves', name: 'Waves', mode: 'light', note: 'A quiet shore, slow swells', sw: ['#eef4f2', '#94c4c6', '#3a9a9a', '#f6e3cf'] },
+  { id: 'notebook', name: 'Notebook', mode: 'light', note: 'Ballpoint on ruled paper', sw: ['#fbf8ee', '#233457', '#ffe240', '#d6383a'] },
+  { id: 'comic', name: 'Comic Book', mode: 'light', note: 'Halftone dots, ink outlines, POW!', sw: ['#fff3c4', '#111111', '#ffd400', '#ff2424'] },
+  { id: 'groovy', name: 'Groovy', mode: 'light', note: '1973 sunburst, far out', sw: ['#f4dfae', '#e8742c', '#d9a521', '#7b8f2e'] },
+  { id: 'kyoto', name: 'Kyoto', mode: 'light', note: 'Pagoda, torii, dojo, falling sakura', sw: ['#f3ece0', '#c0392b', '#f4aebf', '#6b8e5a'] },
+  { id: 'beige', name: 'Beige Box', mode: 'light', note: 'A 90s desktop, bevels on teal', sw: ['#008080', '#c0c0c0', '#000080', '#ffffff'] },
 ];
-const LEGACY_THEME = { dark: 'polar', light: 'classic' };
+const LEGACY_THEME = { dark: 'polar', light: 'classic', cream: 'sakura' };
 const systemTheme = () => (matchMedia('(prefers-color-scheme: dark)').matches ? 'polar' : 'classic');
 const savedTheme = () => { const t = store.get('theme', null); const id = LEGACY_THEME[t] || t; return THEMES.some(x => x.id === id) ? id : null; };
+// Deep Sea's sea life: creatures swimming across at different depths and speeds,
+// a garden on the sea floor, and bubbles rising. Built once, removed for other themes.
+const SEA = ['🐠', '🐟', '🐡', '🦈', '🐙', '🦑', '🐢', '🐋', '🐬', '🦐', '🪼', '🐳', '🦭', '🐠', '🐟', '🪼', '🐡', '🐟', '🐠', '🦞', '🪼', '🐟', '🐙', '🐠'];
+function seaLife(on) {
+  let box = document.querySelector('.sea-life');
+  if (!on) { document.querySelectorAll('.sea-life').forEach(x => x.remove()); return; }
+  if (box) return;
+  box = document.createElement('div'); box.className = 'sea-life'; box.setAttribute('aria-hidden', 'true');
+  const rnd = (a, b) => a + Math.random() * (b - a);
+  SEA.forEach((emoji, i) => {
+    const big = emoji === '🐋' || emoji === '🐳' || emoji === '🦈';
+    const f = document.createElement('div'); f.className = 'swim' + (i % 2 ? ' rtl' : '');
+    const dur = big ? rnd(70, 110) : rnd(28, 70);
+    f.style.cssText = `top:${rnd(6, 88).toFixed(1)}vh;--size:${big ? rnd(56, 84) : rnd(24, 44)}px;--dur:${dur.toFixed(1)}s;--delay:${(-rnd(0, dur)).toFixed(1)}s;--bob:${rnd(3, 7).toFixed(1)}s;--amp:${rnd(6, 22).toFixed(0)}px;--o:${(big ? rnd(.45, .65) : rnd(.75, 1)).toFixed(2)};--glow:${emoji === '🪼' ? 'rgba(255,138,216,.8)' : 'rgba(94,242,214,.5)'}`;
+    const s = document.createElement('span'); s.textContent = emoji; f.append(s); box.append(f);
+  });
+  for (const [x, e] of [[3, '🪸'], [11, '🌿'], [19, '🐚'], [33, '🪸'], [47, '🦀'], [58, '🌿'], [71, '🪸'], [83, '🐚'], [92, '🌿']]) {
+    const g = document.createElement('div'); g.className = 'floor'; g.textContent = e;
+    g.style.cssText = `left:${x}vw;--size:${rnd(26, 46).toFixed(0)}px;--dur:${rnd(4, 8).toFixed(1)}s`; box.append(g);
+  }
+  for (let i = 0; i < 70; i++) {
+    const b = document.createElement('i'); b.className = 'bubble';
+    const dur = rnd(9, 24);
+    b.style.cssText = `left:${rnd(0, 100).toFixed(1)}vw;--d:${rnd(4, 18).toFixed(0)}px;--dur:${dur.toFixed(1)}s;--delay:${(-rnd(0, dur)).toFixed(1)}s;--sway:${rnd(-24, 24).toFixed(0)}px`;
+    box.append(b);
+  }
+  document.body.prepend(box);
+  // a few small bubbles drift up over the cards too
+  const front = document.createElement('div'); front.className = 'sea-life front'; front.setAttribute('aria-hidden', 'true');
+  for (let i = 0; i < 18; i++) {
+    const b = document.createElement('i'); b.className = 'bubble';
+    const dur = rnd(12, 26);
+    b.style.cssText = `left:${rnd(0, 100).toFixed(1)}vw;--d:${rnd(3, 9).toFixed(0)}px;--dur:${dur.toFixed(1)}s;--delay:${(-rnd(0, dur)).toFixed(1)}s;--sway:${rnd(-18, 18).toFixed(0)}px`;
+    front.append(b);
+  }
+  document.body.append(front);
+}
+// Waves: a soft sun with slowly turning rays, and seagulls gliding across, flapping now and then.
+function shoreLife(on) {
+  let box = document.querySelector('.shore-life');
+  if (!on) { document.querySelectorAll('.shore-life').forEach(x => x.remove()); return; }
+  if (box) return;
+  box = document.createElement('div'); box.className = 'shore-life'; box.setAttribute('aria-hidden', 'true');
+  const rnd = (a, b) => a + Math.random() * (b - a);
+  box.innerHTML = '<div class="rays"></div><div class="sun"></div>';
+  const front = document.createElement('div'); front.className = 'shore-life front'; front.setAttribute('aria-hidden', 'true');
+  for (let i = 0; i < 9; i++) {
+    const g = document.createElement('div'); g.className = 'gull' + (i % 3 === 2 ? ' rtl' : '');
+    const dur = rnd(26, 60), far = rnd(0, 1);
+    g.style.cssText = `top:${rnd(4, 60).toFixed(1)}vh;--w:${(28 + (1 - far) * 34).toFixed(0)}px;--o:${(0.55 + (1 - far) * 0.35).toFixed(2)};--dur:${dur.toFixed(1)}s;--delay:${(-rnd(0, dur)).toFixed(1)}s;--flap:${rnd(0.5, 1.1).toFixed(2)}s;--soar:${rnd(4, 9).toFixed(1)}s`;
+    g.innerHTML = '<svg viewBox="0 0 40 14"><path d="M2 9 Q 11 1 20 9 Q 29 1 38 9"/></svg>';
+    (i < 4 ? box : front).append(g);                       // a few behind the cards, most gliding over them
+  }
+  document.body.prepend(box); document.body.append(front);
+}
+// Kyoto: mist drifting past the hills and sakura petals falling, a few of them over the cards.
+function kyotoLife(on) {
+  if (!on) { document.querySelectorAll('.kyoto-life').forEach(x => x.remove()); return; }
+  if (document.querySelector('.kyoto-life')) return;
+  const rnd = (a, b) => a + Math.random() * (b - a);
+  const back = document.createElement('div'), front = document.createElement('div');
+  back.className = 'kyoto-life'; front.className = 'kyoto-life front';
+  for (const b of [back, front]) b.setAttribute('aria-hidden', 'true');
+  back.innerHTML = '<div class="mist"></div>';
+  for (let i = 0; i < 34; i++) {
+    const p = document.createElement('i'); p.className = 'petal';
+    const dur = rnd(12, 26);
+    p.style.cssText = `left:${rnd(0, 100).toFixed(1)}vw;--s:${rnd(8, 16).toFixed(0)}px;--o:${rnd(.55, .95).toFixed(2)};--dur:${dur.toFixed(1)}s;--delay:${(-rnd(0, dur)).toFixed(1)}s;--sway:${rnd(-70, 70).toFixed(0)}px;--spin:${rnd(2.5, 6).toFixed(1)}s`;
+    (i % 3 === 0 ? front : back).append(p);                    // a third drift over the cards
+  }
+  document.body.prepend(back); document.body.append(front);
+}
+// Sakura, holding nothing back: swaying cherry branches in the top corners, paper
+// lanterns, a blizzard of petals and blossoms (some over the cards), gusts that
+// sweep flurries across, and petals that follow the cursor.
+let sakuraTrail = null;
+function sakuraLife(on) {
+  if (!on) { document.querySelectorAll('.sakura-life').forEach(x => x.remove()); if (sakuraTrail) { removeEventListener('pointermove', sakuraTrail); sakuraTrail = null; } return; }
+  if (document.querySelector('.sakura-life')) return;
+  const rnd = (a, b) => a + Math.random() * (b - a);
+  const back = document.createElement('div'), front = document.createElement('div');
+  back.className = 'sakura-life'; front.className = 'sakura-life front';
+  for (const b of [back, front]) b.setAttribute('aria-hidden', 'true');
+  back.innerHTML = '<div class="branch left"></div><div class="branch right"></div>';
+  // lanterns hang in the gaps of the header row, not over the title or filters
+  [15.3, 59.4, 99].forEach((x, i) => {
+    const l = document.createElement('div'); l.className = 'lantern';
+    l.style.cssText = `left:${x}vw;--cord:${[18, 26, 120][i]}px;--dur:${rnd(3, 5).toFixed(1)}s;animation-delay:${(-rnd(0, 4)).toFixed(1)}s`;
+    l.append(document.createElement('i')); back.append(l);
+  });
+  const petal = (flower) => {
+    const p = document.createElement('i'); p.className = 'petal' + (flower ? ' flower' : '');
+    if (flower) p.textContent = '🌸';
+    const dur = rnd(9, 22);
+    p.style.cssText = `left:${rnd(-5, 100).toFixed(1)}vw;--s:${(flower ? rnd(12, 22) : rnd(8, 17)).toFixed(0)}px;--o:${rnd(.6, 1).toFixed(2)};--dur:${dur.toFixed(1)}s;--delay:${(-rnd(0, dur)).toFixed(1)}s;--sway:${rnd(-90, 90).toFixed(0)}px;--spin:${rnd(1.8, 4.5).toFixed(1)}s`;
+    return p;
+  };
+  for (let i = 0; i < 70; i++) (i % 3 === 0 ? front : back).append(petal(i % 9 === 0));
+  for (let g = 0; g < 2; g++) {
+    const gust = document.createElement('div'); gust.className = 'gust';
+    gust.style.cssText = `--top:${rnd(15, 55).toFixed(0)}vh;--dur:${rnd(16, 24).toFixed(1)}s;--delay:${(-rnd(0, 16)).toFixed(1)}s`;
+    for (let i = 0; i < 26; i++) { const p = document.createElement('i'); p.className = 'petal'; p.style.cssText = `--x:${rnd(0, 40).toFixed(0)}vw;--y:${rnd(0, 100).toFixed(0)}%;--s:${rnd(7, 14).toFixed(0)}px;--spin:${rnd(0.8, 2).toFixed(1)}s`; gust.append(p); }
+    front.append(gust);
+  }
+  document.body.prepend(back); document.body.append(front);
+  if (!matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    let last = 0;
+    sakuraTrail = e => {
+      const now = performance.now(); if (now - last < 70) return; last = now;
+      const t = document.createElement('i'); t.className = 'sakura-trail';
+      t.style.cssText = `left:${e.clientX}px;top:${e.clientY}px;--dx:${rnd(-30, 30).toFixed(0)}px`;
+      document.body.append(t); setTimeout(() => t.remove(), 1500);
+    };
+    addEventListener('pointermove', sakuraTrail, { passive: true });
+  }
+}
 function applyTheme(id) {
   const t = THEMES.find(x => x.id === id) || THEMES[0];
+  sakuraLife(t.id === 'sakura');
+  seaLife(t.id === 'deepsea');
+  shoreLife(t.id === 'waves');
+  kyotoLife(t.id === 'kyoto');
   document.documentElement.dataset.theme = t.id;
   document.documentElement.dataset.mode = t.mode;
   $('#themeBtn').title = 'Theme: ' + t.name;
@@ -502,7 +630,9 @@ function render() {
 }
 
 // what the Signals tab and its charts need from the page
-const scanCtx = () => ({ apiJson, openReplay, fmt: { money, price, dateTime, signedPct, pct } });
+const scanCtx = () => ({ apiJson, openReplay, fmt: { money, price, dateTime, signedPct, pct },
+  // read when a chart opens, so the proposed risk uses the latest balance
+  equity: () => (account?.available && Number.isFinite(account.equity) ? account.equity : null), balanceHidden: () => balanceHidden });
 
 // ===== dashboard =====
 function renderDashboard(trades, s, from, to) {
@@ -616,6 +746,11 @@ function renderWarnings(s, ds) {
     if (p.liqDistance !== null && p.liqDistance < 0.04) list.push({ level: 'critical', rank: 98, text: `${name} is ${pct(p.liqDistance, 1)} from liquidation`, detail: `Mark ${price(p.mark)}, liquidation ${price(p.liq)}.` });
     if (p.sl && p.slLoss < 0 && dl.limit && -(dl.net + p.slLoss) >= dl.limit) list.push({ level: 'warning', rank: 88, text: `Stop-out on ${name} breaks today’s limit`, detail: `If the stop at ${price(p.sl)} hits, you lose ${money(p.slLoss)}, taking today past your ${WARN.dailyLossPct}% daily loss limit.` });
   }
+  // the playbook's limits on open trades
+  const open = positions?.available ? positions.positions : [];
+  const eqv = equityNow(), atRisk = open.reduce((n, p) => n + (p.slLoss < 0 ? -p.slLoss : 0), 0);
+  if (open.length >= MAX_POSITIONS) list.push({ level: 'warning', rank: 86, text: `${open.length} positions open: at your cap of ${MAX_POSITIONS}`, detail: 'The playbook allows at most 5 open positions. No new trades until one closes.' });
+  if (eqv && atRisk / eqv > 0.06) list.push({ level: 'warning', rank: 87, text: `${(atRisk / eqv * 100).toFixed(1)}% of equity at risk across open stops`, detail: `If every stop is hit you lose ${money(atRisk, { sign: false, dp: 0 })}. The plan keeps it to about 5 trades at 1–2% each.` });
   const ck = checkin();
   if (!ck.complete) {
     list.push({ level: 'warning', rank: 80, text: 'Daily check-in not done', detail: `${ck.affirmed.length} of ${ck.list.length} commitments affirmed${ck.wrote ? '' : ', and nothing written in today’s journal yet'}. Finish it at the top of the dashboard before you trade.` });
@@ -665,6 +800,7 @@ $('#eyeBtn').onclick = () => { balanceHidden = !balanceHidden; store.set('hideBa
 paintEye();
 
 function paintAccount() {
+  queueMicrotask(() => { if (view === 'dashboard') renderDayPlaybook(); });   // the playbook shows risk in dollars
   if (account?.available && balanceHidden) {
     const v = $('#equityValue'); cancelAnimationFrame(v._raf); v._v = null; v.textContent = '$' + MASK;
     $('#equitySub').textContent = `${MASK} unrealized · ${MASK} wallet · as of ${time(account.at)}`;
@@ -884,7 +1020,10 @@ function renderRecap() {
 }
 
 // ---- today's playbook (public/playbook.js); re-drawn as the day or NY session changes ----
-function renderDayPlaybook() { renderDayCard($('#dayPlaybook'), { nyLive: Boolean(bias?.sessions?.[0]?.live && !bias.sessions[0].pending) }); }
+function equityNow() { return account?.available && Number.isFinite(account.equity) ? account.equity : null; }   // hoisted: renderWarnings can run before this line
+function renderDayPlaybook() {
+  renderDayCard($('#dayPlaybook'), { nyLive: Boolean(bias?.sessions?.[0]?.live && !bias.sessions[0].pending), equity: account?.available && Number.isFinite(account.equity) ? account.equity : null, hidden: balanceHidden, money: v => money(v, { sign: false, dp: 0 }) });
+}
 
 // ---- NY bias: did the last New York session close above or below its open ----
 // Public 15m candles, no key. Re-read every minute while the dashboard is open,
@@ -904,13 +1043,14 @@ async function refreshBias(force = false) {
     bias = { sym, hours, at: now, sessions: nySessions(candles, { hours, now, days: 5 }) };
   } catch (e) { bias = { sym, hours, at: now, error: e.message }; }
   finally { biasBusy = false; }
-  if (view === 'dashboard') { renderBias(); renderDayPlaybook(); }
+  if (view === 'dashboard') { renderBias(); renderDayPlaybook(); renderPositions(); }
   // re-read right after a running session closes, so the pill flips at 5 PM ET rather than up to a minute later
   clearTimeout(biasFlip);
   const live = bias?.sessions?.[0];
   if (live?.live) biasFlip = setTimeout(() => refreshBias(true), Math.max(1000, live.end - Date.now() + 5000));
 }
 let biasFlip = null;
+setInterval(() => { if (view === 'dashboard' && !document.hidden) { tickPlaybook($('#dayPlaybook')); renderDayPlaybook(); } }, 20_000);
 setInterval(() => { if (view === 'dashboard' && !document.hidden) refreshBias(); }, BIAS_EVERY);
 document.addEventListener('visibilitychange', () => { if (!document.hidden && view === 'dashboard') refreshBias(); });
 
@@ -1016,10 +1156,21 @@ function renderPositions() {
     return;
   }
   const ps = [...positions.positions].sort((a, b) => b.value - a.value);
-  $('#posCount').textContent = ps.length ? `· ${ps.length}` : '';
+  // count against the playbook's cap, and what's at risk if every stop is hit
+  $('#posCount').textContent = ps.length ? `· ${ps.length} of ${MAX_POSITIONS}` : '';
+  $('#posCount').classList.toggle('full', ps.length >= MAX_POSITIONS);
   const total = ps.reduce((n, p) => n + p.upnl, 0);
+  const atRisk = ps.reduce((n, p) => n + (p.slLoss < 0 ? -p.slLoss : 0), 0), eqv = equityNow();
   $('#posEye').hidden = !ps.length;
-  $('#posTotal').replaceChildren(...(ps.length ? [el('span', 'muted small', 'Unrealized '), posPnlHidden ? el('b', 'masked', '$' + MASK) : el('b', sign(total), money(total))] : []));
+  // two groups that each stay on one line: "Unrealized $x" and "At risk $y (z%)"
+  const group = (label, value) => { const g = el('span', 'pos-total-group'); g.append(el('span', 'muted small', label + ' '), value); return g; };
+  const groups = !ps.length ? [] : [group('Unrealized', posPnlHidden ? el('b', 'masked', '$' + MASK) : el('b', sign(total), money(total)))];
+  if (ps.length && atRisk) {
+    const g = group('At risk', posPnlHidden ? el('b', 'masked', '$' + MASK) : el('b', 'pos-risk', money(atRisk, { sign: false, dp: 0 }) + (eqv ? ` (${(atRisk / eqv * 100).toFixed(1)}%)` : '')));
+    g.title = 'What you lose if every open stop-loss is hit' + (ps.some(p => !p.sl) ? '. Positions without a stop aren’t counted.' : '');
+    groups.push(g);
+  }
+  $('#posTotal').replaceChildren(...groups);
   showPosCard(ps.length > 0);
   if (!ps.length) { list.replaceChildren(el('p', 'muted small pos-none', 'No open positions.')); return; }
 
@@ -1047,6 +1198,9 @@ function renderPositions() {
     btn.type = 'button';
     btn.onclick = () => openReplay(positionTrade(p), [positionTrade(p)], replayCtx());
     row.append(name, pnl, px, liq, btn);
+    // the playbook's notes for this position: NY bias, where it is in the plan, weekend
+    const notes = positionNotes(p, { sessions: bias?.sessions || [], price, equity: equityNow() });
+    if (notes.length) { const n = el('div', 'pos-notes'); n.append(...notes.map(x => el('span', 'pos-note ' + x.cls, x.text))); row.append(n); }
     return row;
   }));
 }
@@ -1110,6 +1264,7 @@ function renderRisk(s) {
 
 // ===== analytics =====
 function renderAnalytics(trades, s, from, to) {
+  renderCloseBreakdown(scanCtx(), $('#closeBreakdown'), trades, v => money(v));
   const tradeAt = new Map(trades.map(t => [t.time, t]));
   lineChart($('#equityChart'), {
     points: s.n ? [{ x: s.equity[0].x - 1, y: 0 }, ...s.equity] : [], color: 'pos', fmtTick: compact, label: 'Cumulative net P&L',

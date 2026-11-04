@@ -215,3 +215,38 @@ test('the scaling plan: adds at +1R and +2R, stops stepped up behind them', asyn
   assert.equal(scalePlan({ entry: 100, sl: 99, tp: 101.5 }, 'Long').adds.length, 1); // the target comes before +2R
   assert.equal(scalePlan(null, 'Long'), null);
 });
+
+test('proposed risk: by grade, half on a weak close, none outside the trading day', async () => {
+  const { proposedRisk } = await import('../public/day-playbook.js');
+  const at = (d, h) => new Date(2026, 10, 1 + d, h).getTime();      // Nov 2 2026 is a Monday (local time)
+  assert.equal(proposedRisk('A+', at(1, 8)).pct, 2);                  // Monday 08:00, prime
+  assert.equal(proposedRisk('A', at(1, 12)).pct, 1);
+  assert.equal(proposedRisk('A', at(4, 16)).pct, 0.5);                 // Thursday 16:00 is weak: half
+  assert.equal(proposedRisk('A', at(5, 8)).pct, 0.5);                  // Friday: half
+  assert.equal(proposedRisk('A', at(1, 20)).pct, 0);                   // outside the trading day
+  assert.equal(proposedRisk('B', at(5, 8)).pct, 0);                    // B on a weak close: skip
+  assert.equal(proposedRisk('C', at(1, 8)).pct, 0);
+});
+
+test('position notes: NY bias, plan step, weekend', async () => {
+  const { positionNotes } = await import('../public/day-playbook.js');
+  const day = 864e5, t0 = Date.UTC(2026, 10, 2, 22);
+  const sessions = [{ end: t0, bias: 'bearish' }, { end: t0 - day, bias: 'bullish' }];
+  const wed = new Date(2026, 10, 4, 10);
+  const short = { dir: 'Short', entry: 100, sl: 102, mark: 97, openedAt: t0 - day / 2 };
+  const n = positionNotes(short, { sessions, now: wed }).map(x => x.text);
+  assert.match(n[0], /NY flipped your way since entry ▼/);
+  assert.match(n[1], /^\+1\.5R: past \+1R/);
+  assert.match(positionNotes({ ...short, dir: 'Long', sl: 98, mark: 100.5 }, { sessions, now: wed }).map(x => x.text).join('|'), /Against the NY bias ▼.*\+0\.3R: stop at the wick, first add at 102/);
+  assert.match(positionNotes({ ...short, sl: 99.5 }, { sessions, now: wed })[1].text, /protected/);
+  assert.match(positionNotes(short, { sessions, now: new Date(2026, 10, 7, 10) }).at(-1).text, /Weekend/);
+});
+
+test('playbook countdowns', async () => {
+  const { countdown } = await import('../public/day-playbook.js');
+  const at = Date.UTC(2026, 10, 4, 8);
+  assert.equal(countdown(at, at - 83 * 60_000), 'in 1h 23m');
+  assert.equal(countdown(at, at - 5 * 60_000), 'in 5m');
+  assert.equal(countdown(at, at + 60_000), 'now');
+  assert.equal(countdown(at, at + 10 * 60_000), 'done');
+});

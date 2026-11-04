@@ -284,3 +284,84 @@ function paint() {
   more.textContent = `Show ${Math.min(100, list.length - tab.shown)} more of ${list.length - tab.shown}`;
   more.onclick = () => { tab.shown += 100; paint(); };
 }
+
+// ---- Analytics: the six 4h closes ----
+// For each close (in local time): the year's A/A+ signals as expected results,
+// per weekday as a heatmap, and the user's own trades grouped by the close they
+// opened after. Expected R is the single entry after fees; the scaling plan
+// adds to it on winners.
+const DAYS_SHORT = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+const localDay = t => (new Date(t).getDay() + 6) % 7;                         // Mon = 0
+const hourLabel = h => `${String(h).padStart(2, '0')}:00`;
+export async function renderCloseBreakdown(ctx, root, trades, fmtMoney) {
+  let data;
+  try { data = await loadSignals(ctx, 365); }
+  catch (e) { root.replaceChildren(el('p', 'muted small', `Couldn’t load signals: ${e.message}`)); return; }
+  const good = data.signals.filter(s => s.grade && (s.grade.grade === 'A' || s.grade.grade === 'A+') && s.trade && s.trade.result !== 'open');
+  const span = Math.max(1, (Date.now() - Math.min(...data.signals.map(s => s.t))) / (7 * DAY));   // weeks covered
+  const at = s => new Date(s.t + H4).getHours();
+  const hours = [...new Set(data.signals.map(at))].sort((a, b) => a - b);
+  const stat = xs => {
+    if (!xs.length) return null;
+    const R = xs.map(s => afterFees(s.trade)), wins = xs.filter(s => s.trade.result === 'win').length;
+    const sorted = [...R].sort((a, b) => b - a), trim = sorted.slice(Math.min(3, Math.floor(R.length / 10)));
+    return { n: xs.length, win: wins / xs.length, avg: R.reduce((a, b) => a + b, 0) / R.length, total: R.reduce((a, b) => a + b, 0), trimmed: trim.reduce((a, b) => a + b, 0) / trim.length };
+  };
+  // the user's trades, by the 4h close they opened after
+  const mine = new Map();
+  for (const t of trades) {
+    if (!Number.isFinite(t.openedAt)) continue;
+    const h = new Date(Math.floor(t.openedAt / H4) * H4).getHours();
+    const m = mine.get(h) || { n: 0, wins: 0, pnl: 0 }; m.n++; if (t.pnl > 0) m.wins++; m.pnl += t.pnl; mine.set(h, m);
+  }
+
+  // the table
+  const table = el('table', 'data close-table');
+  const head = el('tr');
+  for (const [h, num] of [['Close', 0], ['A/A+ a year', 1], ['A week', 1], ['Hit target', 1], ['Avg R', 1], ['Without its outliers', 1], ['Expected R a week', 1], ['Verdict', 0], ['Your trades', 1], ['Your win rate', 1], ['Your P&L', 1]]) head.append(el('th', num ? 'num' : '', h));
+  const thead = el('thead'); thead.append(head);
+  const body = el('tbody');
+  for (const h of hours) {
+    const st = stat(good.filter(s => at(s) === h)), m = mine.get(h);
+    const week = st ? st.n / span : 0, exp = st ? week * st.avg : null;
+    // the verdict: positive even without the biggest winners, positive only because of them, or negative
+    const verdict = !st || st.n < 15 ? ['Too few', 'muted'] : st.avg > 0.15 && st.trimmed > 0 ? ['Trade it', 'pos'] : st.avg > 0 ? ['Outliers only', 'warn'] : ['Skip', 'neg'];
+    const tr = el('tr', h >= 8 && h <= 16 ? 'in-hours' : '');
+    const v = el('td'); v.append(el('span', 'close-verdict ' + verdict[1], verdict[0]));
+    tr.append(
+      el('td', '', hourLabel(h) + (h >= 8 && h <= 16 ? ' ·' : '')),
+      el('td', 'num', st ? String(st.n) : '0'), el('td', 'num', st ? week.toFixed(1) : '—'),
+      el('td', 'num', st ? Math.round(st.win * 100) + '%' : '—'),
+      el('td', 'num ' + (st ? cls(st.avg) : ''), st ? rText(st.avg) : '—'),
+      el('td', 'num ' + (st ? cls(st.trimmed) : ''), st ? rText(st.trimmed) : '—'),
+      el('td', 'num ' + (exp !== null ? cls(exp) : ''), exp !== null ? rText(exp) : '—'), v,
+      el('td', 'num', m ? String(m.n) : '—'), el('td', 'num', m ? Math.round(m.wins / m.n * 100) + '%' : '—'),
+      el('td', 'num ' + (m ? cls(m.pnl) : ''), m ? fmtMoney(m.pnl) : '—'),
+    );
+    body.append(tr);
+  }
+  table.append(thead, body);
+  const wrap = el('div', 'table-wrap'); wrap.append(table);
+
+  // the heatmap: avg R by close and weekday
+  const grid = el('div', 'close-grid');
+  grid.append(el('span', 'cg-corner', ''), ...DAYS_SHORT.map(d => el('span', 'cg-day', d)));
+  const cells = [];
+  for (const h of hours) {
+    grid.append(el('span', 'cg-hour', hourLabel(h)));
+    for (let d = 0; d < 7; d++) {
+      const st = stat(good.filter(s => at(s) === h && localDay(s.t + H4) === d));
+      const c = el('span', 'cg-cell' + (st && st.n < 8 ? ' thin' : ''));
+      if (st) {
+        const k = Math.max(-1, Math.min(1, st.avg / 2));
+        c.style.setProperty('--k', Math.abs(k).toFixed(2));
+        c.classList.add(k >= 0 ? 'pos' : 'neg');
+        c.append(el('b', '', rText(st.avg).replace(/(\.\d)\d/, '$1')), el('small', '', `${st.n}`));
+        c.title = `${DAYS_SHORT[d]} ${hourLabel(h)} close: ${st.n} A/A+ trades, ${Math.round(st.win * 100)}% hit target, ${rText(st.avg)} avg after fees`;
+      } else c.append(el('small', '', '—'));
+      cells.push(c); grid.append(c);
+    }
+  }
+  const note = el('p', 'muted small close-note', `Times are your local time; · marks your trading day (08:00–16:00). “Without its outliers” drops the best few trades, so a close that only looks good because of one huge winner shows up. Expected R a week = A/A+ setups a week × avg R. In the grid, faded cells have under 8 trades. Your trades are grouped by the 4h candle they were opened in.`);
+  root.replaceChildren(wrap, el('h3', 'close-sub', 'By weekday'), grid, note);
+}

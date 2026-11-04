@@ -9,8 +9,8 @@
   <link rel="stylesheet" href="style.css">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,400..800&family=Fraunces:ital,opsz,wght@0,9..144,400..900;1,9..144,400..900&family=Inter:wght@400..800&family=JetBrains+Mono:wght@400..800&family=Nunito:wght@400..800&family=Shippori+Mincho:wght@500;700;800&family=Zen+Kaku+Gothic+New:wght@400;500;700&family=Sora:wght@300..800&family=Space+Grotesk:wght@400..700&family=Orbitron:wght@500..900&family=Newsreader:ital,opsz,wght@0,6..72,400..800;1,6..72,400..800&family=Playfair+Display:ital,wght@0,700..900;1,700..900&family=UnifrakturMaguntia&family=DotGothic16&family=Press+Start+2P&family=VT323&display=swap">
-  <script>(function(){var M={polar:"dark",classic:"light",cream:"light",terminal:"dark",atelier:"light",dojo:"dark",glass:"dark",synthwave:"dark",broadsheet:"light",arcade:"dark"},L={dark:"polar",light:"classic"},t=null;try{t=JSON.parse(localStorage.getItem("perp-report:theme"))}catch(e){}t=L[t]||t;if(!M[t])t=matchMedia("(prefers-color-scheme: dark)").matches?"polar":"classic";var d=document.documentElement;d.dataset.theme=t;d.dataset.mode=M[t]})()</script>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,400..800&family=Fraunces:ital,opsz,wght@0,9..144,400..900;1,9..144,400..900&family=Inter:wght@400..800&family=JetBrains+Mono:wght@400..800&family=Nunito:wght@400..800&family=Shippori+Mincho:wght@500;700;800&family=Zen+Kaku+Gothic+New:wght@400;500;700&family=Sora:wght@300..800&family=Space+Grotesk:wght@400..700&family=Orbitron:wght@500..900&family=Newsreader:ital,opsz,wght@0,6..72,400..800;1,6..72,400..800&family=Playfair+Display:ital,wght@0,700..900;1,700..900&family=UnifrakturMaguntia&family=DotGothic16&family=Press+Start+2P&family=VT323&family=Lexend:wght@300..700&family=Righteous&family=IBM+Plex+Mono:wght@400;500;600;700&family=Architects+Daughter&family=Patrick+Hand&family=Caveat:wght@500..700&family=Bangers&family=Comic+Neue:wght@400;700&family=Shrikhand&family=Fredoka:wght@400..700&family=Silkscreen:wght@400;700&family=Yuji+Syuku&family=M+PLUS+Rounded+1c:wght@400;700;800&display=swap">
+  <script>(function(){var M={polar:"dark",classic:"light",sakura:"light",terminal:"dark",atelier:"light",dojo:"dark",glass:"dark",synthwave:"dark",broadsheet:"light",arcade:"dark",deepsea:"dark",blueprint:"dark",waves:"light",notebook:"light",comic:"light",groovy:"light",kyoto:"light",beige:"light"},L={dark:"polar",light:"classic",cream:"sakura"},t=null;try{t=JSON.parse(localStorage.getItem("perp-report:theme"))}catch(e){}t=L[t]||t;if(!M[t])t=matchMedia("(prefers-color-scheme: dark)").matches?"polar":"classic";var d=document.documentElement;d.dataset.theme=t;d.dataset.mode=M[t]})()</script>
 </head>
 <body>
 <div class="app">
@@ -367,6 +367,16 @@
           <h2>By tag</h2>
           <p id="tagSub" class="sub">Results for trades you tagged. Tag a trade from its replay.</p>
           <div class="table-wrap"><table id="tagTable" class="data compact"></table></div>
+        </div>
+
+        <div class="card c12 close-card">
+          <div class="card-row">
+            <div>
+              <h2>The six 4h closes</h2>
+              <p class="sub">What the signals did at each close over the last year (A and A+ setups, single entry, after fees), what you can expect from them, and how your own trades opened at each close went.</p>
+            </div>
+          </div>
+          <div id="closeBreakdown"><p class="muted small">Loading a year of signals…</p></div>
         </div>
 
         <div class="c12 section-head">
