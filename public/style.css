@@ -2380,3 +2380,7 @@ td.counter { color: var(--warn); }
 .st-slot .st-cdot, .st-slot .st-sess { margin: 0; }
 .st-cth span.sess { width: 15px; margin: 0 18.5px; }
 .sig-grade.wrong-time { filter: grayscale(.7); opacity: .75; }
+.st-gcell { display: inline-flex; align-items: center; gap: 4px; flex-wrap: nowrap; white-space: nowrap; }
+.st-gcell .sig-grade, .st-gcell .st-wrong { margin-left: 0; }
+.st-gcell .st-tag { line-height: 18px; }
+.st-setup-t.avoid .st-gcell { flex-wrap: wrap; white-space: normal; }

@@ -11,7 +11,7 @@ import { proposedRisk, PICKS_PER_CLOSE, setupName } from './day-playbook.js';
 
 const DAY = 864e5, GOAL = 100, START_KEY = 'perp-dojo:forward-start';
 const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text !== undefined) e.textContent = text; return e; };
-const rText = v => (v === null || v === undefined || !Number.isFinite(v) ? '—' : `${v > 0 ? '+' : v < 0 ? '−' : ''}${Math.abs(v).toFixed(2)}R`);
+const rText = v => (v === null || v === undefined || !Number.isFinite(v) ? '—' : `${+v.toFixed(2) > 0 ? '+' : +v.toFixed(2) < 0 ? '−' : ''}${Math.abs(v).toFixed(2)}R`);
 const cls = v => (v > 0 ? 'pos' : v < 0 ? 'neg' : '');
 const coin = s => s.replace(/USDT$|USDC$/, '');
 const sum = a => a.reduce((x, y) => x + y, 0);
