@@ -88,6 +88,7 @@ Locally, **Save to server** writes the snapshot to `data/`. If you set `BLOB_REA
    - `BYBIT_API_KEY` and `BYBIT_API_SECRET`: your read-only key
    - `PERP_PASSWORD`: required, because every API call checks it. The page asks for it once and remembers it in that browser.
    - `BYBIT_BASE_URL`: only for regional accounts
+   - `BYBIT_DEMO`: not needed. A read-only Demo Trading key is detected on its own, its account comes from Bybit's demo server, and prices and candles stay live. Set `1` or `0` to force one side.
 4. Under **Storage**, create or connect a **Blob** store with **Private** access. This adds `BLOB_READ_WRITE_TOKEN`. Until then the app still works, but Save and Load are disabled and everything stays in the browser.
 5. Deploy.
 

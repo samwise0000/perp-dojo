@@ -330,7 +330,7 @@ const uidKey = k => `${k}:${status?.key?.uid ?? 'local'}`;
 async function loadStatus(recheck) {
   status = await apiJson('/api/status' + (recheck ? '?recheck' : ''));
   const k = status.key;
-  $('#account').textContent = k.ok ? `UID ${k.uid} · ${k.keyHint}` : '';
+  $('#account').textContent = k.ok ? `${k.demo ? 'Demo · ' : ''}UID ${k.uid} · ${k.keyHint}` : '';
   for (const id of ['#pullBtn', '#syncBtn', '#saveBtn', '#loadBtn']) $(id).hidden = !k.ok;
   if (!k.ok) { show('setup'); $('#setupMsg').textContent = k.message; paintConnection(); return; }
   const warn = k.daysLeft !== null && k.daysLeft <= 14 ? `This API key expires in ${k.daysLeft} day${k.daysLeft === 1 ? '' : 's'}.` : '';
