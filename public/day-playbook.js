@@ -175,13 +175,38 @@ export function renderPlaybook(root, { now = new Date(), nyLive = false, equity 
   root.hidden = false;
 }
 
+// BTC vs the alt in a new trade's first 3 candles: a long where BTC's 4h candle breaks the
+// one before's high but the alt's doesn't (a short: the low) is the alt lagging while the
+// full 1R is still on. Backtest (A-grades Mon–Thu, past year): the 62 trades it caught before
+// +1R made −0.42R a trade held; closing at that candle's close made −0.02R. Closing on it
+// after +1R, or taking half off, cost money. alt4h / btc4h: 4h candles, oldest first.
+export const SMT_WINDOW = 3;
+const H4_MS = 4 * 3_600_000;
+export function smtCheck(p, alt4h, btc4h, now = Date.now()) {
+  if (!p.openedAt || !alt4h?.length || !btc4h?.length) return null;
+  const long = p.dir === 'Long', ext = c => (long ? c.h : -c.l);
+  const first = Math.round(p.openedAt / H4_MS) * H4_MS;                  // the candle that opened at the entry close (entries land a few minutes either side of it)
+  const alt = new Map(alt4h.map(c => [c.t, c])), btc = new Map(btc4h.map(c => [c.t, c]));
+  for (let i = 0; i < SMT_WINDOW; i++) {
+    const t = first + i * H4_MS;
+    if (t + H4_MS > now) return { state: 'watch', until: first + SMT_WINDOW * H4_MS };   // still inside the window
+    const a = alt.get(t), a0 = alt.get(t - H4_MS), b = btc.get(t), b0 = btc.get(t - H4_MS);
+    if (!a || !a0 || !b || !b0) return null;
+    if (ext(b) > ext(b0) && !(ext(a) > ext(a0))) return { state: 'diverged', t };
+  }
+  return null;                                                           // the window passed without it
+}
+
+const hhmm = ms => { const d = new Date(ms); return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`; };
+const coinOf = s => String(s || '').replace(/USDT$/, '');
 // Notes for a live position, from what the backtest found:
 //   - the NY bias now vs the position (with it: hold; flipped your way since
 //     entry: keep holding; against it: weaker odds)
 //   - where it stands in the plan (next step at +1R / +2R, or protected)
 //   - Friday to Sunday: hold runners through the weekend
 // p: { dir, entry, mark, sl, slLoss, openedAt }; sessions: newest first, as nySessions returns.
-export function positionNotes(p, { sessions = [], now = new Date(), price = v => String(v), equity = null } = {}) {
+// smt: smtCheck's answer for this position, when the app has read its 4h candles.
+export function positionNotes(p, { sessions = [], now = new Date(), price = v => String(v), equity = null, smt = null } = {}) {
   const notes = [], long = p.dir === 'Long', side = long ? 'bullish' : 'bearish', d = long ? 1 : -1;
   const done = (sessions || []).filter(x => !x.live && !x.missing && x.bias);
   const nowBias = done[0]?.bias || null;
@@ -202,6 +227,9 @@ export function positionNotes(p, { sessions = [], now = new Date(), price = v =>
       if (r >= 2) notes.push({ cls: 'pos', text: `${rs}: past +2R, add half size and move all stops to break-even` });
       else if (r >= 1) notes.push({ cls: 'pos', text: `${rs}: past +1R, add the same size and move all stops to entry. Next at ${at(2)} (+2R)` });
       else notes.push({ cls: '', text: `${rs}: stop at the wick, first add at ${at(1)} (+1R)` });
+      // still at full risk in the first 3 candles: does the alt keep up with BTC? (smtCheck)
+      if (r < 1 && smt?.state === 'diverged') notes.push({ cls: 'warn', text: `BTC broke its last 4h ${long ? 'high' : 'low'} but ${coinOf(p.symbol)} didn’t, still at full risk: closing is reasonable` });
+      else if (r < 1 && smt?.state === 'watch') notes.push({ cls: 'muted', text: `Tip: until the ${hhmm(smt.until)} close, if BTC breaks its last 4h ${long ? 'high' : 'low'} and ${coinOf(p.symbol)} doesn’t, closing is reasonable` });
     }
   }
   // hold time: most stops come within 8h; trades that last longer are the ones that reach the target
@@ -213,6 +241,10 @@ export function positionNotes(p, { sessions = [], now = new Date(), price = v =>
     const pct = -p.slLoss / equity * 100;
     if (pct > RISK_PCT['A++'] * 1.25) notes.push({ cls: 'warn', text: `Risking ${pct.toFixed(1)}% of equity to the stop: the plan's most is ${RISK_PCT['A++']}% (A++)` });
   }
+  // Thursday, working (in profit, or the stop at/past entry): the last weekday before the weekend, when
+  // runners have days to go. Trades still open into the weekend averaged +15.7R in the backtest.
+  if (now.getDay() === 4 && p.mark && p.entry && (d * (p.mark - p.entry) > 0 || (p.sl && d * (p.entry - p.sl) <= 0)))
+    notes.push({ cls: 'pos', text: 'Thursday: the weekend is coming, consider leaving it open for a few days' });
   // into the weekend in profit (+1R or better, or stop already at/past entry): runners held over it
   // tended to keep going, and an add that risked 1R to the existing stop made money in the backtest
   if ([5, 6, 0].includes(now.getDay())) {

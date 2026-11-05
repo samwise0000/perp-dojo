@@ -266,6 +266,31 @@ test('position notes: NY bias, plan step, weekend', async () => {
   assert.match(positionNotes({ ...short, mark: 99.5 }, { sessions, now: sat }).at(-1).text, /^Weekend: hold your runner/);       // +0.25R
   assert.match(positionNotes({ ...short, sl: 99.5 }, { sessions, now: sat }).at(-1).text, /consider adding/);                   // stop past entry, in profit
   assert.match(positionNotes({ ...short, sl: 99.5, mark: 101 }, { sessions, now: sat }).at(-1).text, /hold your runner/);         // stop past entry, but underwater
+  const thu = new Date(2026, 10, 5, 10);
+  assert.match(positionNotes(short, { sessions, now: thu }).at(-1).text, /^Thursday: the weekend is coming, consider leaving it open for a few days/);
+  assert.doesNotMatch(positionNotes({ ...short, mark: 101 }, { sessions, now: thu }).map(x => x.text).join('|'), /Thursday/);   // underwater, stop at the wick
+  assert.doesNotMatch(positionNotes(short, { sessions, now: wed }).map(x => x.text).join('|'), /Thursday/);
+});
+
+test('position notes: BTC breaks its 4h high but the alt doesn’t, in the first 3 candles', async () => {
+  const { positionNotes, smtCheck } = await import('../public/day-playbook.js');
+  const H4 = 4 * 3_600_000, t0 = Date.UTC(2026, 10, 4, 4);             // entry at a 12:00 close (UTC+8)
+  const c = (t, h, l = 90) => ({ t, o: 95, h, l, c: 95 });
+  const long = { symbol: 'ETHFIUSDT', dir: 'Long', entry: 100, sl: 98, mark: 100.5, openedAt: t0 + 3 * 60_000 };
+  const btc = [c(t0 - H4, 100), c(t0, 101), c(t0 + H4, 102)];
+  const altLag = [c(t0 - H4, 100), c(t0, 99.5), c(t0 + H4, 101)];       // BTC made a higher high in the first candle, the alt didn't
+  const altWith = [c(t0 - H4, 100), c(t0, 100.5), c(t0 + H4, 101)];
+  assert.deepEqual(smtCheck(long, altLag, btc, t0 + H4 + 1), { state: 'diverged', t: t0 });
+  assert.deepEqual(smtCheck(long, altWith, btc, t0 + H4 + 1), { state: 'watch', until: t0 + 3 * H4 });
+  assert.deepEqual(smtCheck(long, altWith, btc, t0 + 1), { state: 'watch', until: t0 + 3 * H4 });
+  assert.equal(smtCheck({ ...long, openedAt: t0 - 2 * 60_000 }, altLag, btc, t0 + H4 + 1).state, 'diverged');   // entered just before the close
+  const text = smt => positionNotes(long, { smt }).map(x => x.text).join('|');
+  assert.match(text({ state: 'diverged' }), /BTC broke its last 4h high but ETHFI didn’t, still at full risk: closing is reasonable/);
+  assert.match(text({ state: 'watch', until: t0 + 3 * H4 }), new RegExp(`Tip: until the ${String(new Date(t0 + 3 * H4).getHours()).padStart(2, '0')}:00 close, if BTC breaks its last 4h high and ETHFI doesn’t`));
+  assert.doesNotMatch(positionNotes({ ...long, mark: 102.5 }, { smt: { state: 'diverged' } }).map(x => x.text).join('|'), /BTC broke/);   // past +1R: the plan's stops handle it
+  assert.doesNotMatch(positionNotes({ ...long, sl: 100 }, { smt: { state: 'diverged' } }).map(x => x.text).join('|'), /BTC broke/);      // stop at entry
+  const short = { ...long, dir: 'Short', sl: 102, mark: 99.8 };
+  assert.match(positionNotes(short, { smt: { state: 'watch', until: t0 } }).map(x => x.text).join('|'), /close, if BTC breaks its last 4h low/);
 });
 
 test('playbook countdowns', async () => {

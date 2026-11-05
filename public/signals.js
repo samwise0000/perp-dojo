@@ -2,8 +2,8 @@
 // rules and filters as the Telegram alerts (sfp.js ALERT_SETTINGS), so the
 // site and the bot always agree. The Signals tab lists them all; the dashboard
 // shows the latest few. Candles come from the IndexedDB cache in signal-chart.js.
-import { detect, H4, ALERT_SETTINGS, DEFAULT_PAIRS, trendMap, btcSide, gradeSetup, rsi, GRADE_ORDER } from './sfp.js';
-import { sessionList, nyBiasAt, nyFadeAt, fadesNy } from './bias.js';
+import { detect, H4, ALERT_SETTINGS, DEFAULT_PAIRS, trendMap, btcSide, gradeSetup, rsi, GRADE_ORDER, btcRsiTag } from './sfp.js';
+import { sessionList, nyBiasAt, nyFadeAt, fadesNy, nyPullbackAt, inGoldenZone } from './bias.js';
 import { setupName, proposedRisk, PICKS_PER_CLOSE } from './day-playbook.js';
 import { idbGet, idbSet } from './db.js';
 import { candlesFor, pool, showOnChart, bindCharts, adds, setAdds, outcomeOf } from './signal-chart.js';
@@ -62,11 +62,17 @@ async function compute(days) {
   try { h1 = await hourly('BTCUSDT', since - 7 * DAY); sessions = sessionList(h1, { from: since - 7 * DAY }); } catch {}
   // the NY fade at each close (for C++), read once per close
   const fadeMemo = new Map(), fadeAt = T => { if (!fadeMemo.has(T)) fadeMemo.set(T, nyFadeAt(h1, T)); return fadeMemo.get(T); };
+  // ✨ BTC's pullback from the last NY session at each close (the golden-zone tag at 12:00 / 16:00)
+  // BTC's 1h RSI at each close (the 🧊 / ⚠️ tag), from the hour that closed with it
+  const h1rsi = rsi(h1), rsiAt = new Map(h1.map((c, i) => [c.t + H1, h1rsi[i]]));
+  const pullMemo = new Map(), pullAt = T => { if (!pullMemo.has(T)) pullMemo.set(T, nyPullbackAt(h1, T)); return pullMemo.get(T); };
   const signals = per.flat().map(s => {
     const trend = btcSide(s, trends, o.neutralBand);
     const ny = sessions ? nyBiasAt(sessions, s.t + H4) : null;
     const grade = sessions ? gradeSetup(s.side, { ny, swept: btcSfp.has(`${s.t}:${s.side}`), rsi: s.rsi, fade: fadesNy(s.side, fadeAt(s.t + H4)) }) : null;
-    return { ...s, trend, counter: trend === 'counter', btc: trends.get(s.t - H4) || null, ny, grade };
+    const pull = pullAt(s.t + H4), golden = inGoldenZone(s.side, pull, new Date(s.t + H4).getHours()) ? pull.back : null;
+    const btcRsi = grade && !['C', 'C++'].includes(grade.grade) ? btcRsiTag(s.side, rsiAt.get(s.t + H4)) : null;   // with the NY bias only
+    return { ...s, trend, counter: trend === 'counter', btc: trends.get(s.t - H4) || null, ny, grade, golden, btcRsi };
   }).sort((a, b) => b.t - a.t || a.symbol.localeCompare(b.symbol));
   markPicks(signals);
   progress.stage = 'done'; notify();
@@ -119,6 +125,20 @@ const gradeChip = s => {
   chip.title = `Grade ${g}${name ? ` · ${name}` : ''}: ${s.grade.why}` + (s.pick ? '\n👉 One of the 2 picks on a busy close' : s.passed ? '\nNot a pick: more than 2 qualified on this close' : '') + (wt ? '\n⛔ Wrong time: the plan skips this grade at this close' : '');
   return chip;
 };
+// ✨ BTC in golden zone / NY pullback (12:00 and 16:00 closes): tracking only
+const goldenChip = s => {
+  if (s.golden == null) return null;
+  const c = el('span', 'sig-golden', '✨ Golden zone');
+  c.title = `BTC in golden zone / NY pullback: BTC had given back ${s.golden > 1 ? 'all of the last NY session’s move and more' : `${Math.round(s.golden * 100)}% of the last NY session’s move`}, the way this setup trades.\nTracking only. At the 12:00 close, A-grades with it made +1.34R a trade in the backtest, those without −0.33R.`;
+  return c;
+};
+// 🧊 BTC cooled off / ⚠️ BTC stretched, from BTC's 1h RSI at the close (tracking only)
+const btcRsiChip = s => {
+  if (!s.btcRsi) return null;
+  const t = s.btcRsi, c = el('span', 'sig-btcrsi ' + t.kind, t.kind === 'cool' ? '🧊 BTC cooled' : t.kind === 'deep' ? '⚠️ BTC stretched' : '⚠️ Chasing BTC');
+  c.title = t.text + '\nBTC’s 1h RSI, read from this setup’s side. Backtest (A-grades, main closes): 35–45 made +2.90R a trade without the best 3, ≤35 −0.22R, ≥60 −0.17R. Tracking only.';
+  return c;
+};
 const pctS = v => (v === null || v === undefined || !Number.isFinite(v) ? '—' : (v > 0 ? '+' : v < 0 ? '−' : '') + Math.abs(v * 100).toFixed(2) + '%');
 const cls = v => (v > 0 ? 'pos' : v < 0 ? 'neg' : '');
 const coin = s => s.replace(/USDT$/, '');
@@ -168,7 +188,7 @@ export async function renderSignalsWidget(ctx) {
     // Nov 3, 08:00 PM · 2h ago
     // [Countertrend]      so far
     const top = el('div', 'sig-top');
-    top.append(...[el('b', short ? 'neg' : 'pos', `${short ? '▼' : '▲'} ${coin(s.symbol)}`), el('span', 'muted', short ? 'short' : 'long'), gradeChip(s),
+    top.append(...[el('b', short ? 'neg' : 'pos', `${short ? '▼' : '▲'} ${coin(s.symbol)}`), el('span', 'muted', short ? 'short' : 'long'), gradeChip(s), goldenChip(s), btcRsiChip(s),
       el('span', 'sig-res ' + cls(res.v), res.v === null ? '' : rText(res.v))].filter(Boolean));
     const mid = el('div', 'sig-mid');
     mid.append(el('span', 'muted small', `${closeTime(s.t)} · ${ago(s.t)}`));
@@ -333,7 +353,8 @@ function paint() {
   for (const s of list.slice(0, tab.shown)) {
     const tr = el('tr', 'replayable'); tr.tabIndex = 0; tr.title = 'Show on the 4h chart';
     const tc = el('td'); tc.append(trendChip(s));
-    const gc = el('td'); const chip = gradeChip(s); if (chip) gc.append(chip); else gc.textContent = '—';
+    const gc = el('td'), chips = [gradeChip(s), goldenChip(s), btcRsiChip(s)].filter(Boolean);
+    if (chips.length) { const w = el('div', 'sig-chips'); w.append(...chips); gc.append(w); } else gc.textContent = '—';
     const t = s.trade, f = tab.ctx.fmt.price;
     const o = outcomeOf(t), done = o && o.result !== 'open';
     const res = !o ? '—' : done ? { win: '✓ ', loss: '✗ ', entry: '✗ ', be: '= ' }[o.result] + rText(o.R) : o.R === 0 ? 'new' : `open ${rText(o.R)}`;

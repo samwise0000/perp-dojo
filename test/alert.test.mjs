@@ -226,7 +226,7 @@ test('⛔ a good grade at a close the plan skips', async () => {
   const msg = close => preMessage([{ symbol: 'HYPEUSDT', pre: [sig] }], { close }, { tz, ny: bear });
   assert.match(msg(Date.UTC(2026, 10, 3, 12)), /🥇 <b>A<\/b>[^]*├ ⛔ Wrong time/);     // Tue 20:00 UTC+8: an A, skipped
   assert.doesNotMatch(msg(Date.UTC(2026, 10, 3, 4)), /Wrong time/);                // Tue 12:00: a main close
-  assert.match(msg(Date.UTC(2026, 10, 6, 4)), /├ ⛔ Wrong time/);                   // Fri 12:00: weekend, no new trades
+  assert.match(msg(Date.UTC(2026, 10, 6, 4)), /├ 📅 Weekend: not a plan trade, your call/);   // Fri 12:00: weekend, shown but your call
   assert.doesNotMatch(preMessage([{ symbol: 'HYPEUSDT', pre: [{ ...sig, side: 'Long' }] }], { close: Date.UTC(2026, 10, 3, 12) }, { tz, ny: bear }), /Wrong time/);   // a C: no ⛔, it's just a C
 });
 
@@ -253,4 +253,63 @@ test('🌃 Late A++ at 00:00 / 04:00 at 0.5%', async () => {
   const msg = close => preMessage([{ symbol: 'HYPEUSDT', pre: [sig] }], { close }, { tz, ny });
   assert.match(msg(Date.UTC(2026, 10, 3, 20)), /🏆 <b>A\+\+<\/b>[^]*├ 🌃 Late A\+\+: NY open, 4h RSI stretched \(0\.5%\)/);   // Wed 04:00
   assert.match(msg(Date.UTC(2026, 10, 3, 12)), /├ ⛔ Wrong time/);                                                       // Tue 20:00
+});
+
+test('every alert ends with what to take and why', async () => {
+  const { recommendation, preMessage } = await import('../lib/sfp-alert.mjs');
+  const tz = 'Asia/Makassar', bear = { bias: 'bearish', during: false };
+  const sig = (rr, side = 'Short', rsi = 50) => ({ side, rsi, close: 100, line: 101, inside: 0.01, levels: [{ price: 101 }], range: {}, trade: { entry: 100, sl: 102, tp: 100 - 2 * rr, rr } });
+  const hits = [['HYPEUSDT', sig(8)], ['SUIUSDT', sig(5, 'Short', 70)], ['AAVEUSDT', sig(3)], ['ONDOUSDT', sig(9, 'Long')]].map(([symbol, s]) => ({ symbol, s }));
+  const tue12 = Date.UTC(2026, 10, 3, 4), ctx = { ny: bear, btcSides: [] };
+  const rec = recommendation(hits, ctx, tue12, tz);
+  assert.match(rec, /🧭 <b>Take<\/b>\n• <b>SUI short<\/b> · A\+ · 1% · 5\.0R: with the NY bias ▼, 4h RSI 70 \(stretched\)\n• <b>HYPE short<\/b> · A · 1%/);   // best grade first, then R:R
+  assert.match(rec, /Also qualifies, but 2 a close is the limit: AAVE short/);
+  assert.match(rec, /Skip\n• ONDO long · C, against the NY bias ▼: C had no edge in the backtest/);
+  assert.match(recommendation(hits.slice(0, 1), ctx, Date.UTC(2026, 10, 3, 12), tz), /Take: nothing<\/b>\n• HYPE short · A, with the NY bias ▼: the plan skips 20:00/);
+  const fri = recommendation(hits, ctx, Date.UTC(2026, 10, 6, 4), tz);   // Friday 12:00: nothing is a plan trade, the call is yours
+  assert.match(fri, /🧭 <b>Friday: no plan trades, your call<\/b>\nBest on the board:\n• <b>SUI short<\/b> · A\+ · 5\.0R: with the NY bias ▼, 4h RSI 70 \(stretched\)\n• <b>HYPE short<\/b> · A · 8\.0R/);
+  assert.match(fri, /Friday–Sunday entries lost money in every backtest we ran/);
+  assert.match(fri, /The rest\n• AAVE short · A, with the NY bias ▼: no new trades Fri–Sun/);
+  assert.match(recommendation(hits.slice(3), ctx, Date.UTC(2026, 10, 6, 4), tz), /Take: nothing<\/b>\n• ONDO long · C/);   // only a C: nothing to name
+  assert.doesNotMatch(rec, /Thursday/);                                  // a Tuesday
+  assert.match(recommendation(hits, ctx, Date.UTC(2026, 10, 5, 0), tz), /📅 Thursday: the weekend is coming\. If it works, consider leaving it open for a few days/);   // Thu 08:00
+  assert.doesNotMatch(recommendation(hits.slice(3), ctx, Date.UTC(2026, 10, 5, 0), tz), /Thursday/);   // nothing to take
+  const pre = preMessage(hits.map(h => ({ symbol: h.symbol, pre: [h.s] })), { close: tue12 }, { tz, ny: bear });
+  assert.match(pre, /🧭 <b>Take if it closes like this<\/b>/);
+  assert.ok(pre.indexOf('🧭') > pre.lastIndexOf('BTC trend') || !pre.includes('BTC trend'));
+});
+
+test('✨ golden zone: BTC gave back half of the last NY session, tagged at 12:00 and 16:00', async () => {
+  const { nyPullbackAt, inGoldenZone } = await import('../public/bias.js');
+  const { preMessage } = await import('../lib/sfp-alert.mjs');
+  const H = 3_600_000, open = Date.UTC(2026, 10, 3, 13);                // Tue 8 AM New York (EST); the session ends 22:00 UTC
+  const px = t => (t < open ? 100 : t < open + 9 * H ? 100 + (t - open) / H : 109 - (t - open - 9 * H) / H);   // +9 in NY, then back 1 an hour
+  const cs = Array.from({ length: 40 }, (_, i) => { const t = open - 2 * H + i * H; return { t, o: px(t), h: px(t), l: px(t), c: px(t + H) }; });
+  const noon = Date.UTC(2026, 10, 4, 4);                                 // Wed 12:00 in UTC+8: 6h after NY closed
+  const p = nyPullbackAt(cs, noon);
+  assert.equal(p.dir, 'Long'); assert.ok(Math.abs(p.back - 6 / 9) < 1e-9);   // 6 of the 9 given back
+  assert.ok(inGoldenZone('Long', p, 12) && inGoldenZone('Long', p, 16));
+  assert.ok(!inGoldenZone('Short', p, 12) && !inGoldenZone('Long', p, 8));    // against the move, or another close
+  assert.ok(!inGoldenZone('Long', nyPullbackAt(cs, Date.UTC(2026, 10, 4, 0)), 12));   // 2 of 9 back: not yet
+  const sig = { side: 'Long', rsi: 50, close: 100, line: 99, inside: 0.01, levels: [{ price: 99 }], range: {}, trade: { entry: 100, sl: 99, tp: 104, rr: 4 } };
+  const msg = preMessage([{ symbol: 'HYPEUSDT', pre: [sig] }], { close: noon }, { tz: 'Asia/Makassar', ny: { bias: 'bullish', during: false }, pull: p });
+  assert.match(msg, /├ ✨ BTC in golden zone \/ NY pullback: 67% of NY’s move given back/);
+  assert.match(msg, /• <b>HYPE long<\/b> · A · 1% · 4\.0R: with the NY bias ▲ · ✨ BTC in golden zone/);
+});
+
+test('BTC 1h RSI tag: 🧊 cooled off at 35–45 from the setup’s side, ⚠️ when stretched', async () => {
+  const { btcRsiTag } = await import('../public/sfp.js');
+  const { preMessage } = await import('../lib/sfp-alert.mjs');
+  assert.equal(btcRsiTag('Long', 40).kind, 'cool');
+  assert.equal(btcRsiTag('Short', 60).kind, 'cool');                   // 100 − 60 = 40
+  assert.match(btcRsiTag('Long', 33).text, /BTC oversold against it \(1h RSI 33\)/);
+  assert.match(btcRsiTag('Short', 70).text, /BTC overbought against it/);
+  assert.match(btcRsiTag('Long', 64).text, /BTC overbought the trade’s way \(1h RSI 64\): chasing/);
+  assert.equal(btcRsiTag('Long', 50), null); assert.equal(btcRsiTag('Long', null), null);
+  const sig = { side: 'Long', rsi: 50, close: 100, line: 99, inside: 0.01, levels: [{ price: 99 }], range: {}, trade: { entry: 100, sl: 99, tp: 104, rr: 4 } };
+  const msg = preMessage([{ symbol: 'HYPEUSDT', pre: [sig] }], { close: Date.UTC(2026, 10, 3, 4) }, { tz: 'Asia/Makassar', ny: { bias: 'bullish', during: false }, btcRsi: 41.6 });
+  assert.match(msg, /├ 🧊 BTC cooled off \(1h RSI 42\): pulled back, not broken\n/);
+  assert.match(msg, /• <b>HYPE long<\/b> · A · 1% · 4\.0R: with the NY bias ▲ · 🧊 BTC cooled off/);
+  const c = preMessage([{ symbol: 'HYPEUSDT', pre: [sig] }], { close: Date.UTC(2026, 10, 3, 4) }, { tz: 'Asia/Makassar', ny: { bias: 'bearish', during: false }, btcRsi: 41.6 });
+  assert.doesNotMatch(c, /BTC cooled/);                                   // a C (against the NY bias): no tag
 });

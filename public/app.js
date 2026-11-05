@@ -1,4 +1,4 @@
-import { renderPlaybook as renderDayCard, positionNotes, tickPlaybook, MAX_POSITIONS } from './day-playbook.js';
+import { renderPlaybook as renderDayCard, positionNotes, tickPlaybook, MAX_POSITIONS, smtCheck, SMT_WINDOW } from './day-playbook.js';
 import {
   summarize, groupStats, periodPnl, byWeekday, byHour, histogram, insights,
   dailyMap, dayStreaks, tradingScore, calendarMonth, scaleOf, dayKey, WEEKDAYS, warnings, WARN, dailyLoss, weekStart, weekReview,
@@ -1152,6 +1152,22 @@ function showPosCard(show) {
   renderSignalsWidget(scanCtx());
 }
 
+// BTC vs the alt in a new position's first 3 candles (smtCheck): 4h candles read once per 4h candle
+const smtMemo = new Map();
+function smtFor(p) {
+  const H4 = 4 * 3_600_000, now = Date.now();
+  if (!p.openedAt || now - p.openedAt > (SMT_WINDOW + 1) * H4) return null;
+  const key = `${p.symbol}:${p.openedAt}:${Math.floor(now / H4)}`;
+  if (smtMemo.has(key)) { const v = smtMemo.get(key); return v === 'busy' ? null : smtCheck(p, v.alt, v.btc, now); }
+  smtMemo.set(key, 'busy');
+  const from = Math.round(p.openedAt / H4) * H4 - 2 * H4;
+  const get = sym => apiJson(`/api/klines?category=linear&symbol=${sym}&interval=240&start=${from}&end=${now}`).then(r => r.candles.filter(c => c.t + H4 <= now));
+  Promise.all([get(p.symbol), get('BTCUSDT')])
+    .then(([alt, btc]) => { smtMemo.set(key, { alt, btc }); if (view === 'dashboard') renderPositions(); })
+    .catch(() => smtMemo.delete(key));
+  return null;
+}
+
 function renderPositions() {
   const list = $('#posList');
   if (!positions) { list.replaceChildren(el('p', 'muted small', 'Checking Bybit for open positions…')); return; }
@@ -1205,7 +1221,7 @@ function renderPositions() {
     btn.onclick = () => openReplay(positionTrade(p), [positionTrade(p)], replayCtx());
     row.append(name, pnl, px, liq, btn);
     // the playbook's notes for this position: NY bias, where it is in the plan, weekend
-    const notes = positionNotes(p, { sessions: bias?.sessions || [], price, equity: equityNow() });
+    const notes = positionNotes(p, { sessions: bias?.sessions || [], price, equity: equityNow(), smt: smtFor(p) });
     if (notes.length) { const n = el('div', 'pos-notes'); n.append(...notes.map(x => el('span', 'pos-note ' + x.cls, x.text))); row.append(n); }
     return row;
   }));

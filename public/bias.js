@@ -97,6 +97,32 @@ export function nyBiasAt(sessions, t, hours = NY_HOURS.session, tz = NY_TZ) {
   return { bias, during };
 }
 
+// ✨ NY pullback ("BTC in golden zone"): how much of the last finished NY session's
+// move BTC has given back by `close` (0 = still at the session's close, 1 = all of it).
+// Backtest (A-grades, main closes Mon–Thu, past year): at the 12:00 close (UTC+8)
+// the ones with BTC ≥50% back made +1.34R a trade, those without −0.33R, and that held
+// in every quarter. At 16:00 the split was noise; at 08:00 it ran the other way.
+// Tagged at 12:00 and 16:00 for tracking only: it doesn't change the grade or size.
+export const NY_PULLBACK = { back: 0.5, hours: [12, 16] };
+// From candles of `ms` ({t,o,h,l,c}; the last one may still be forming): { dir: 'Long'|'Short', back } or null.
+export function nyPullbackAt(candles, close, { ms = 3_600_000 } = {}) {
+  const [oh, om] = NY_HOURS.session.open.split(':').map(Number), [ch, cm] = NY_HOURS.session.close.split(':').map(Number);
+  const at = t => candles.find(c => c.t === t);
+  for (let back = 0; back < 7; back++) {
+    const [y, m, d] = zonedDate(close - back * DAY, NY_TZ);
+    const wd = new Date(Date.UTC(y, m - 1, d)).getUTCDay();
+    if (wd === 0 || wd === 6) continue;
+    const start = zonedToUtc(y, m, d, oh, om, NY_TZ), end = zonedToUtc(y, m, d, ch, cm, NY_TZ);
+    if (end > close) continue;
+    const o = at(start)?.o, c = at(end - ms)?.c, now = at(close - ms)?.c;
+    if (o == null || c == null || now == null || o === c) return null;
+    return { dir: c > o ? 'Long' : 'Short', back: (c - now) / (c - o) };
+  }
+  return null;
+}
+// Is a setup on `side` at a close of local hour `hour` in BTC's golden zone: with the session's move, after a ≥50% pullback?
+export const inGoldenZone = (side, pull, hour) => Boolean(pull) && NY_PULLBACK.hours.includes(hour) && pull.dir === side && pull.back >= NY_PULLBACK.back;
+
 // The NY fade: at the 4h close in the last 2 hours of the NY session (04:00 in
 // UTC+8), when BTC has moved 2%+ since the session opened and sits in the outer
 // 20% of the session's range, setups against that move are flagged. Backtest
