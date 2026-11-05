@@ -4,7 +4,7 @@
 // shows the latest few. Candles come from the IndexedDB cache in signal-chart.js.
 import { detect, H4, ALERT_SETTINGS, DEFAULT_PAIRS, trendMap, btcSide, gradeSetup, rsi, GRADE_ORDER, btcRsiTag } from './sfp.js';
 import { sessionList, nyBiasAt, nyFadeAt, fadesNy, nyPullbackAt, inGoldenZone } from './bias.js';
-import { setupName, proposedRisk, PICKS_PER_CLOSE } from './day-playbook.js';
+import { setupName, proposedRisk, picksAt } from './day-playbook.js';
 import { idbGet, idbSet } from './db.js';
 import { candlesFor, pool, showOnChart, bindCharts, adds, setAdds, outcomeOf } from './signal-chart.js';
 
@@ -110,10 +110,11 @@ function markPicks(signals) {
   const byClose = new Map();
   for (const s of signals) { if (!s.trade || !(riskOf(s)?.pct > 0)) continue; if (!byClose.has(s.t)) byClose.set(s.t, []); byClose.get(s.t).push(s); }
   for (const g of byClose.values()) {
-    if (g.length <= PICKS_PER_CLOSE) continue;
+    const max = picksAt(g[0].t + H4);
+    if (g.length <= max) continue;
     g.sort((a, b) => GRADE_ORDER.indexOf(a.grade.grade) - GRADE_ORDER.indexOf(b.grade.grade) || b.trade.rr - a.trade.rr);
-    g.slice(0, PICKS_PER_CLOSE).forEach(s => (s.pick = true));
-    g.slice(PICKS_PER_CLOSE).forEach(s => (s.passed = true));
+    g.slice(0, max).forEach(s => (s.pick = true));
+    g.slice(max).forEach(s => (s.passed = true));
   }
   return signals;
 }
@@ -135,7 +136,7 @@ const goldenChip = s => {
 // 🧊 BTC cooled off / ⚠️ BTC stretched, from BTC's 1h RSI at the close (tracking only)
 const btcRsiChip = s => {
   if (!s.btcRsi) return null;
-  const t = s.btcRsi, c = el('span', 'sig-btcrsi ' + t.kind, t.kind === 'cool' ? '🧊 BTC cooled' : t.kind === 'deep' ? '⚠️ BTC stretched' : '⚠️ Chasing BTC');
+  const t = s.btcRsi, c = el('span', 'sig-btcrsi ' + t.kind, t.kind === 'cool' ? '🧊 RSI' : '⚠️ RSI');
   c.title = t.text + '\nBTC’s 1h RSI, read from this setup’s side. Backtest (A-grades, main closes): 35–45 made +2.90R a trade without the best 3, ≤35 −0.22R, ≥60 −0.17R. Tracking only.';
   return c;
 };
@@ -164,9 +165,23 @@ const result = s => {
 };
 const open = (s, list) => showOnChart(s, list);
 
+// R so far for a signal that's still in its first candle: the latest 5m close against its stop (cached for a minute)
+const liveMemo = new Map();
+function liveR(s) {
+  const key = s.symbol + ':' + Math.floor(Date.now() / 60_000);
+  if (!liveMemo.has(key)) {
+    const qs = new URLSearchParams({ category: 'linear', symbol: s.symbol, interval: '5', start: Date.now() - 30 * 60_000, end: Date.now() });
+    liveMemo.set(key, ctx_.apiJson('/api/klines?' + qs).then(r => r.candles.at(-1)?.c ?? null).catch(() => null));
+  }
+  return liveMemo.get(key).then(px => {
+    const t = s.trade, risk = Math.abs(t.entry - t.sl);
+    return px && risk ? (s.side === 'Short' ? t.entry - px : px - t.entry) / risk : null;
+  });
+}
+
 // ---- dashboard widget: the latest few ----
-// three beside the open positions, six when they have the row to themselves
-const latestCount = () => ($('#posCard').hidden && innerWidth > 560 ? 6 : 3);
+// four beside the open positions, eight when they have the row to themselves
+const latestCount = () => ($('#posCard').hidden && innerWidth > 560 ? 8 : 4);
 export async function renderSignalsWidget(ctx) {
   const box = $('#sigLatest');
   if (!box.childElementCount) box.replaceChildren(...Array.from({ length: latestCount() }, (_, i) => {
@@ -184,17 +199,47 @@ export async function renderSignalsWidget(ctx) {
     const b = el('button', 'sig-tile sig-in' + (s.grade ? ' tile-' + gradeKey(s.grade.grade) : '')); b.style.setProperty('--i', i); b.type = 'button'; b.title = 'Open on the 4h chart';
     const short = s.side === 'Short';
     const res = result(s);
-    // ▲ ONDO long        +1.33%
-    // Nov 3, 08:00 PM · 2h ago
-    // [Countertrend]      so far
+    // a square: ▲ ONDO + grade on top, the result big, then the close and BTC's trend
     const top = el('div', 'sig-top');
-    top.append(...[el('b', short ? 'neg' : 'pos', `${short ? '▼' : '▲'} ${coin(s.symbol)}`), el('span', 'muted', short ? 'short' : 'long'), gradeChip(s), goldenChip(s), btcRsiChip(s),
-      el('span', 'sig-res ' + cls(res.v), res.v === null ? '' : rText(res.v))].filter(Boolean));
+    top.append(...[gradeChip(s)].filter(Boolean));
+    // the ✨ golden zone and BTC's RSI read as small pills: orange when stretched or extended, blue when cooled off
+    if (goldenChip(s)) { const g = el('span', 'sig-pill gold', '✨'); g.title = goldenChip(s).title; top.append(g); }
+    if (s.btcRsi) { const r = el('span', 'sig-pill ' + (s.btcRsi.kind === 'cool' ? 'cool' : 'warn'), 'RSI'); r.title = s.btcRsi.text; top.append(r); }
+    const tc = trendChip(s); tc.classList.add('sig-trend-top'); tc.title = `BTC’s 4h trend: ${tc.textContent}`; tc.textContent = { aligned: 'Aligned', counter: 'Counter', neutral: 'Neutral' }[s.trend] || 'BTC ?'; top.append(tc);
+    const name = el('div', 'sig-coin ' + (short ? 'neg' : 'pos'));
+    name.append(el('b', '', `${short ? '▼' : '▲'} ${coin(s.symbol)}`));
+    if (s.trade) { const t = el('span', 'sig-target'); t.append(el('i', '', '🎯'), `${s.trade.rr.toFixed(1)}R`); t.title = `Target: the opposing level, ${s.trade.rr.toFixed(1)}R from the entry`; name.append(t); }
     const mid = el('div', 'sig-mid');
-    mid.append(el('span', 'muted small', `${closeTime(s.t)} · ${ago(s.t)}`));
+    mid.append(el('span', 'sig-res ' + cls(res.v), res.v === null ? '—' : rText(res.v)), el('span', 'muted small', `${short ? 'short' : 'long'} · ${res.label}`));
+    // still inside its first 4h candle: no closed candle to score yet, so read the live price for R so far
+    if (res.v === null && res.label === 'new' && s.trade) liveR(s).then(r => {
+      if (r === null) return;
+      const v = mid.querySelector('.sig-res'); v.className = 'sig-res ' + cls(r); v.textContent = rText(r);
+      mid.querySelector('.muted').textContent = `${short ? 'short' : 'long'} · live`;
+      v.title = 'So far, from the live price: its first 4h candle hasn’t closed yet';
+      // the stop → target bar too (x, fill and bar are set further down; this runs after)
+      fill.className = r >= 0 ? 'pos' : 'neg'; fill.style.left = Math.min(x(0), x(r)) + '%'; fill.style.width = Math.abs(x(r) - x(0)) + '%';
+      bar.title = `stop −1R · now ${rText(r)} (live) · target +${rr.toFixed(1)}R`;
+    });
+    // where it stands between the stop (−1R) and the target, as a thin bar
+    const rr = s.trade?.rr || 0, now = res.v ?? 0, span = 1 + Math.max(rr, 1), x = v => ((Math.max(-1, Math.min(rr, v)) + 1) / span) * 100;
+    const bar = el('div', 'sig-bar'), fill = el('i', now >= 0 ? 'pos' : 'neg'), zero = el('b', '');
+    fill.style.left = Math.min(x(0), x(now)) + '%'; fill.style.width = Math.abs(x(now) - x(0)) + '%'; zero.style.left = x(0) + '%'; bar.style.setProperty('--z', x(0) + '%');
+    bar.append(fill, zero);
+    bar.title = s.trade ? `stop −1R · now ${rText(now)} · target +${rr.toFixed(1)}R` : '';
     const bot = el('div', 'sig-bot');
-    bot.append(trendChip(s), el('span', 'muted small', res.label));
-    b.append(top, mid, bot);
+    bot.append(el('span', 'muted small', `${closeTime(s.t)} · ${ago(s.t)}`));
+    b.classList.add(short ? 'short' : 'long');
+    // the bar with its ends priced: the stop on the left, the entry, the target on the right
+    const pf = v => String(Number(v.toPrecision(5)));
+    const track = el('div', 'sig-track');
+    if (s.trade) {
+      const ends = el('div', 'sig-ends');
+      ends.append(el('span', 'neg', pf(s.trade.sl)), el('span', 'pos', pf(s.trade.tp)));
+      ends.title = `stop ${pf(s.trade.sl)} · entry ${pf(s.trade.entry)} · target ${pf(s.trade.tp)}`;
+      track.append(bar, ends);
+    }
+    b.append(top, name, mid, ...(s.trade ? [track] : []), bot);
     b.onclick = () => open(s, list);
     return b;
   }));

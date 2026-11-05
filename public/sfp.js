@@ -364,15 +364,15 @@ export const GRADE_ORDER = ['A++', 'A+', 'A', 'B+', 'B', 'C++', 'C'];
 // always "BTC stretched against the trade"). Backtest (A-grades, main closes Mon–Thu, past year):
 //   35–45  🧊 BTC cooled: pulled back without breaking down      86 trades, +2.90R a trade without the best 3
 //   ≤35    ⚠️ BTC stretched against it: the pullback is a turn     104, −0.22R without the best 3
-//   ≥60    ⚠️ BTC stretched the trade's way: chasing             45, −0.17R a trade, no quarter positive
+//   ≥60    ⚠️ BTC extended the trade's way (ran already)           45, −0.17R a trade, no quarter positive
 //   (all A-grades there: +1.35R without the best 3). A tag for tracking: grades and sizes don't change.
 export const BTC_RSI_BANDS = { deep: 35, cool: 45, chase: 60 };
 export function btcRsiTag(side, r) {
   if (r == null || !Number.isFinite(r)) return null;
-  const v = side === 'Short' ? 100 - r : r, n = Math.round(r), against = side === 'Short' ? 'overbought' : 'oversold', yours = side === 'Short' ? 'oversold' : 'overbought';
+  const v = side === 'Short' ? 100 - r : r, n = Math.round(r), against = side === 'Short' ? 'overbought' : 'oversold';
   if (v <= BTC_RSI_BANDS.deep) return { kind: 'deep', rsi: n, text: `⚠️ BTC ${against} against it (1h RSI ${n}): the pullback may be a turn` };
   if (v <= BTC_RSI_BANDS.cool) return { kind: 'cool', rsi: n, text: `🧊 BTC cooled off (1h RSI ${n}): pulled back, not broken` };
-  if (v >= BTC_RSI_BANDS.chase) return { kind: 'chase', rsi: n, text: `⚠️ BTC ${yours} the trade’s way (1h RSI ${n}): chasing` };
+  if (v >= BTC_RSI_BANDS.chase) return { kind: 'chase', rsi: n, text: `⚠️ BTC already extended the trade’s way (1h RSI ${n}): wait for a cool-off` };
   return null;
 }
 

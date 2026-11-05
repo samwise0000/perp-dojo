@@ -216,7 +216,8 @@ test('🌙 Midnight sweep line at the 00:00 close', async () => {
   const msg = close => preMessage([{ symbol: 'HYPEUSDT', pre: [sig] }], { close }, { tz, ny: bear, btcSweep: { pre: ['Short'] } });
   assert.match(msg(Date.UTC(2026, 10, 3, 16)), /🥇 <b>A<\/b>[^]*├ 🌙 Midnight sweep: BTC swept with it mid-NY session/);   // Wed 00:00 UTC+8
   assert.doesNotMatch(msg(Date.UTC(2026, 10, 3, 20)), /Midnight sweep/);       // 04:00
-  assert.doesNotMatch(msg(Date.UTC(2026, 10, 6, 16)), /Midnight sweep/);       // Sat 00:00
+  assert.match(msg(Date.UTC(2026, 10, 6, 16)), /🌙 Midnight sweep: BTC swept with it mid-NY session \(tracking, 0\.06%, trade cautiously\)/);   // Sat 00:00: Friday night, a quarter
+  assert.match(msg(Date.UTC(2026, 10, 5, 16)), /├ 🌙 Midnight sweep: BTC swept with it mid-NY session \(tracking, 0\.06%, trade cautiously\)/);   // Fri 00:00: Thursday night, caution
 });
 
 test('⛔ a good grade at a close the plan skips', async () => {
@@ -226,7 +227,8 @@ test('⛔ a good grade at a close the plan skips', async () => {
   const msg = close => preMessage([{ symbol: 'HYPEUSDT', pre: [sig] }], { close }, { tz, ny: bear });
   assert.match(msg(Date.UTC(2026, 10, 3, 12)), /🥇 <b>A<\/b>[^]*├ ⛔ Wrong time/);     // Tue 20:00 UTC+8: an A, skipped
   assert.doesNotMatch(msg(Date.UTC(2026, 10, 3, 4)), /Wrong time/);                // Tue 12:00: a main close
-  assert.match(msg(Date.UTC(2026, 10, 6, 4)), /├ 📅 Weekend: not a plan trade, your call/);   // Fri 12:00: weekend, shown but your call
+  assert.doesNotMatch(msg(Date.UTC(2026, 10, 6, 4)), /Wrong time|Weekend/);   // Fri 12:00: a weak day, taken at half size
+  assert.match(msg(Date.UTC(2026, 10, 7, 4)), /├ 📅 Weekend: not a plan trade, your call/);   // Sat 12:00: weekend, shown but your call
   assert.doesNotMatch(preMessage([{ symbol: 'HYPEUSDT', pre: [{ ...sig, side: 'Long' }] }], { close: Date.UTC(2026, 10, 3, 12) }, { tz, ny: bear }), /Wrong time/);   // a C: no ⛔, it's just a C
 });
 
@@ -266,11 +268,15 @@ test('every alert ends with what to take and why', async () => {
   assert.match(rec, /Also qualifies, but 2 a close is the limit: AAVE short/);
   assert.match(rec, /Skip\n• ONDO long · C, against the NY bias ▼: C had no edge in the backtest/);
   assert.match(recommendation(hits.slice(0, 1), ctx, Date.UTC(2026, 10, 3, 12), tz), /Take: nothing<\/b>\n• HYPE short · A, with the NY bias ▼: the plan skips 20:00/);
-  const fri = recommendation(hits, ctx, Date.UTC(2026, 10, 6, 4), tz);   // Friday 12:00: nothing is a plan trade, the call is yours
-  assert.match(fri, /🧭 <b>Friday: no plan trades, your call<\/b>\nBest on the board:\n• <b>SUI short<\/b> · A\+ · 5\.0R: with the NY bias ▼, 4h RSI 70 \(stretched\)\n• <b>HYPE short<\/b> · A · 8\.0R/);
-  assert.match(fri, /Friday–Sunday entries lost money in every backtest we ran/);
-  assert.match(fri, /The rest\n• AAVE short · A, with the NY bias ▼: no new trades Fri–Sun/);
-  assert.match(recommendation(hits.slice(3), ctx, Date.UTC(2026, 10, 6, 4), tz), /Take: nothing<\/b>\n• ONDO long · C/);   // only a C: nothing to name
+  const fri = recommendation(hits, ctx, Date.UTC(2026, 10, 6, 4), tz);   // Friday 12:00: trade cautiously, the best one at a quarter size
+  assert.match(fri, /🧭 <b>Take<\/b>\n• <b>SUI short<\/b> · A\+ · 0\.25% · 5\.0R: .*\(trade cautiously, a quarter size\)\n• Also qualifies, but 1 a close is the limit today: HYPE short, AAVE short/);
+  assert.match(fri, /At most 1 new trade a close/);
+  assert.match(fri, /📅 Friday: trade cautiously\. The best setup only, at a quarter size/);
+  const sat = recommendation(hits, ctx, Date.UTC(2026, 10, 7, 4), tz);   // Saturday 12:00: nothing is a plan trade, the call is yours
+  assert.match(sat, /🧭 <b>Saturday: no plan trades, your call<\/b>\nBest on the board:\n• <b>SUI short<\/b> · A\+ · 5\.0R: with the NY bias ▼, 4h RSI 70 \(stretched\)\n• <b>HYPE short<\/b> · A · 8\.0R/);
+  assert.match(sat, /Weekend entries lost money in every backtest we ran/);
+  assert.match(sat, /The rest\n• AAVE short · A, with the NY bias ▼: no new trades on weekends/);
+  assert.match(recommendation(hits.slice(3), ctx, Date.UTC(2026, 10, 7, 4), tz), /Take: nothing<\/b>\n• ONDO long · C/);   // only a C: nothing to name
   assert.doesNotMatch(rec, /Thursday/);                                  // a Tuesday
   assert.match(recommendation(hits, ctx, Date.UTC(2026, 10, 5, 0), tz), /📅 Thursday: the weekend is coming\. If it works, consider leaving it open for a few days/);   // Thu 08:00
   assert.doesNotMatch(recommendation(hits.slice(3), ctx, Date.UTC(2026, 10, 5, 0), tz), /Thursday/);   // nothing to take
@@ -304,7 +310,7 @@ test('BTC 1h RSI tag: 🧊 cooled off at 35–45 from the setup’s side, ⚠️
   assert.equal(btcRsiTag('Short', 60).kind, 'cool');                   // 100 − 60 = 40
   assert.match(btcRsiTag('Long', 33).text, /BTC oversold against it \(1h RSI 33\)/);
   assert.match(btcRsiTag('Short', 70).text, /BTC overbought against it/);
-  assert.match(btcRsiTag('Long', 64).text, /BTC overbought the trade’s way \(1h RSI 64\): chasing/);
+  assert.match(btcRsiTag('Long', 64).text, /BTC already extended the trade’s way \(1h RSI 64\): wait for a cool-off/);
   assert.equal(btcRsiTag('Long', 50), null); assert.equal(btcRsiTag('Long', null), null);
   const sig = { side: 'Long', rsi: 50, close: 100, line: 99, inside: 0.01, levels: [{ price: 99 }], range: {}, trade: { entry: 100, sl: 99, tp: 104, rr: 4 } };
   const msg = preMessage([{ symbol: 'HYPEUSDT', pre: [sig] }], { close: Date.UTC(2026, 10, 3, 4) }, { tz: 'Asia/Makassar', ny: { bias: 'bullish', during: false }, btcRsi: 41.6 });

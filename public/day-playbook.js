@@ -7,19 +7,24 @@
 // The trading day is 8 AM to 4 PM: new trades only at the 08:00, 12:00 and
 // 16:00 closes, never between closes. The other closes (20:00, 00:00, 04:00)
 // broke even or lost once a few outliers were removed.
+import { NY_PULLBACK } from './bias.js';
+import { btcRsiTag } from './sfp.js';
+
 const DAYS = [
-  // [verdict, avg R, win rate, share of days with an A-grade setup, advice]
-  ['weak', -0.32, 19, 85, ['Setups lost money on Sundays: no new trades.', 'One of the busiest days for setups, so it’s easy to get pulled in. Wait for the week.', 'Hold anything already running from the week.', 'Monday’s 08:00 close is the first prime slot of the week.']],
-  ['mixed', 0.41, 28, 87, ['The busiest day: there’s an A-grade setup on most Mondays, often several at once.', 'Only modestly profitable, so be selective and stay under your position cap.', 'The 08:00 close is where Monday’s profit came from.', 'Skip the 20:00, 00:00 and 04:00 closes even when a setup looks good.']],
-  ['strong', 3.47, 44, 56, ['The best day in the backtest: 44% of A-grade trades hit the target.', 'Take A-grade setups with confidence, full plan.', 'Hold to the opposing level. The big winners pay for everything.', 'The 12:00 close was strong on Tuesdays too.']],
-  ['strong', 3.91, 32, 57, ['A strong day, carried by some very large winners.', 'Take A-grade setups with the full plan.', 'Hold to the target; don’t cut winners early.', 'The 08:00 close made most of Wednesday’s profit.']],
-  ['strong', 1.68, 38, 67, ['Solid and steady, positive in both halves of the year.', 'Trades opened now often run into the weekend, and those were the biggest winners.', 'Hold them through the weekend if they’re working.', 'Skip the 16:00 close: it lost money on Thursdays.']],
-  ['weak', -0.47, 26, 56, ['New setups opened on Fridays lost money: no new trades.', 'Hold your runners. Trades already open going into the weekend were the biggest winners.', 'Don’t close winners just because the weekend is coming.', 'Use the day to review the week instead.']],
-  ['weak', -0.56, 15, 65, ['The weakest day: only 15% of A-grade trades hit the target.', 'No new trades.', 'Hold anything already running and leave the stops where the plan puts them.', 'A good day to review the week’s trades and journal.']],
+  // [verdict, avg R, win rate, share of days with an A-grade setup, one line]
+  ['weak', -0.32, 19, 85, 'No new trades. Hold runners; Monday 08:00 is the week’s first prime close.'],
+  ['mixed', 0.41, 28, 87, 'The busiest day, modest profit: be selective. 08:00 is where Monday pays.'],
+  ['strong', 3.47, 44, 56, 'The best day in the backtest: take A-grades with the full plan.'],
+  ['strong', 3.91, 32, 57, 'Strong, carried by big winners: hold to the target.'],
+  ['strong', 1.68, 38, 67, 'Steady. Trades opened today can run into the weekend; 16:00 is weak.'],
+  ['weak', -0.47, 26, 56, 'Trade cautiously: the best A-grade of a close only, a quarter size.'],
+  ['weak', -0.56, 15, 65, 'No new trades. Hold runners and review the week.'],
 ];
 // The three closes you trade, rated per weekday (Sun..Sat) from A-grade results at
 // that close: prime = clearly the best, ok = positive, weak = lost money (half size),
-// skip = new A-grade entries lost in both halves of the year (Fri–Sun: −0.46R a trade on 234).
+// skip = new A-grade entries lost in both halves of the year (Sat–Sun: −0.45R a trade on 170).
+// caution = a tier below weak, by choice: Friday lost too (−0.47R on 64), but runners into the weekend
+// can still start there. A-grades only, a quarter size, and only the best one of a close (CAUTION).
 export const SESSION = [8, 12, 16];
 export const SLOTS = [
   ['skip', 'skip', 'skip'],    // Sun
@@ -27,14 +32,24 @@ export const SLOTS = [
   ['prime', 'ok', 'ok'],       // Tue
   ['prime', 'ok', 'ok'],       // Wed
   ['prime', 'ok', 'weak'],     // Thu
-  ['skip', 'skip', 'skip'],    // Fri
+  ['caution', 'caution', 'caution'],   // Fri: trade cautiously (A-grades lost −0.47R a trade on 64 here)
   ['skip', 'skip', 'skip'],    // Sat
 ];
-const SLOT_TEXT = { prime: 'Prime', ok: 'OK', weak: 'Weak', skip: 'Skip' };
+const SLOT_TEXT = { prime: 'Prime', ok: 'OK', weak: 'Weak', caution: 'Caution', skip: 'Skip' };
+// Trade cautiously: this share of the grade's risk, and at most this many new trades a close
+export const CAUTION = { share: 0.25, picks: 1 };
 export const MAX_POSITIONS = 5;
 // At most this many new trades on one 4h close: when more qualify, the best grade first, then
 // the highest R:R. Backtest: 681R vs 817R uncapped per close, worst day −7R vs −14R.
 export const PICKS_PER_CLOSE = 2;
+// the slot of a main close at `closeAt` (local time), or null outside them
+export function slotAt(closeAt) {
+  const t = new Date(closeAt), i = SESSION.indexOf(t.getHours());
+  if (!t.getMinutes() && [5, 6].includes(t.getDay()) && BPLUS_HOURS.includes(t.getHours())) return 'caution';   // Thursday and Friday nights' 00:00 / 04:00
+  return i < 0 || t.getMinutes() ? null : SLOTS[t.getDay()][i];
+}
+// how many new trades a close takes: one on a trade-cautiously close
+export const picksAt = closeAt => (slotAt(closeAt) === 'caution' ? CAUTION.picks : PICKS_PER_CLOSE);
 
 // Risk per trade, % of account equity, by grade. Half on a weak close; nothing
 // outside the trading day. Change the numbers here.
@@ -62,7 +77,7 @@ export function setupName(grade, closeAt, tag) {
   return null;
 }
 // The proposed risk for a setup whose 4h candle closes at `closeAt` (ms):
-// { pct, slot, why } with slot 'prime' | 'ok' | 'weak' | 'skip' | null (outside hours).
+// { pct, slot, why } with slot 'prime' | 'ok' | 'weak' | 'caution' | 'skip' | null (outside hours).
 // tag: the grade's tag ('midnight' for the Midnight sweep), optional.
 export function proposedRisk(grade, closeAt, { tag = null } = {}) {
   const t = new Date(closeAt), i = SESSION.indexOf(t.getHours());
@@ -70,28 +85,29 @@ export function proposedRisk(grade, closeAt, { tag = null } = {}) {
   const base = RISK_PCT[grade] ?? 0;
   if (!base) return { pct: 0, slot, why: grade === 'C++' ? 'grade C++ (a NY fade): tracking only, no size' : `grade ${grade}: skip` };
   if (!slot) {
-    const off = !t.getMinutes() && OFF_HOURS.includes(t.getHours()) && t.getDay() >= 1 && t.getDay() <= 4;
-    if (off && grade === 'A++' && tag === 'late' && BPLUS_HOURS.includes(t.getHours())) return { pct: LATE_APP_PCT, slot, why: '🌃 Late A++ (NY open, 4h RSI stretched) at a late close, Mon–Thu: half a percent' };
-    if (off && grade === 'A++' && tag === 'late') return { pct: 0, slot, why: '🌃 Late A++ at 20:00 lost money in the backtest: skip (only 00:00 and 04:00)' };
-    if (off && grade === 'B+' && BPLUS_HOURS.includes(t.getHours())) return { pct: OFF_HOURS_PCT, slot, why: '🌊 NY fade at a late close (Mon–Thu): a quarter percent, for tracking' };
-    if (off && grade === 'B+') return { pct: 0, slot, why: 'B+ at 20:00 lost money in the backtest: skip (only 00:00 and 04:00)' };
-    if (off && grade === 'A' && tag === 'midnight' && MIDNIGHT_HOURS.includes(t.getHours())) return { pct: OFF_HOURS_PCT, slot, why: '🌙 Midnight sweep (BTC swept the same way mid-NY session, Mon–Thu 00:00): a quarter percent, for tracking' };
-    return { pct: 0, slot, why: off ? 'outside the main closes, only the 🌃 Late A++ (0.5%) and 🌊 NY fade at 00:00 / 04:00 and the 🌙 Midnight sweep at 00:00 are taken here, at 0.25%: skip' : 'outside your trading hours (08:00, 12:00, 16:00 closes): skip' };
+    const h = t.getHours(), late = !t.getMinutes() && OFF_HOURS.includes(h);
+    // Thursday and Friday nights' 00:00 and 04:00 (Friday's and Saturday's dates): the late setups, trade-cautiously.
+    // Thursday night lost in the backtest (Late A++ −0.49R on 60), so a quarter size keeps it cheap.
+    const friNight = late && [5, 6].includes(t.getDay()) && BPLUS_HOURS.includes(h);
+    const off = late && ((t.getDay() >= 1 && t.getDay() <= 4) || friNight);
+    const r = (() => {
+      if (off && grade === 'A++' && tag === 'late' && BPLUS_HOURS.includes(h)) return { pct: LATE_APP_PCT, slot, why: '🌃 Late A++ (NY open, 4h RSI stretched) at a late close, Mon–Thu: half a percent' };
+      if (off && grade === 'A++' && tag === 'late') return { pct: 0, slot, why: '🌃 Late A++ at 20:00 lost money in the backtest: skip (only 00:00 and 04:00)' };
+      if (off && grade === 'B+' && BPLUS_HOURS.includes(h)) return { pct: OFF_HOURS_PCT, slot, why: '🌊 NY fade at a late close (Mon–Thu): a quarter percent, for tracking' };
+      if (off && grade === 'B+') return { pct: 0, slot, why: 'B+ at 20:00 lost money in the backtest: skip (only 00:00 and 04:00)' };
+      if (off && grade === 'A' && tag === 'midnight' && MIDNIGHT_HOURS.includes(h)) return { pct: OFF_HOURS_PCT, slot, why: '🌙 Midnight sweep (BTC swept the same way mid-NY session, Mon–Thu 00:00): a quarter percent, for tracking' };
+      return { pct: 0, slot, why: off ? 'outside the main closes, only the 🌃 Late A++ (0.5%) and 🌊 NY fade at 00:00 / 04:00 and the 🌙 Midnight sweep at 00:00 are taken here, at 0.25%: skip' : 'outside your trading hours (08:00, 12:00, 16:00 closes): skip' };
+    })();
+    if (!friNight) return r;
+    return { pct: r.pct * CAUTION.share, slot: 'caution', why: r.pct ? `${r.why.replace(/, Mon–Thu|\(Mon–Thu\) |Mon–Thu /g, '')}. ${t.getDay() === 5 ? 'Thursday' : 'Friday'} night: trade cautiously, a quarter of that, the best one only` : r.why };
   }
   if (slot === 'skip') return { pct: 0, slot, why: 'weekend main close: new entries lost in the backtest, skip (hold runners from the week)' };
+  if (slot === 'caution') return grade === 'B' || grade === 'B+' ? { pct: 0, slot, why: `grade ${grade} on a trade-cautiously close: skip` } : { pct: base * CAUTION.share, slot, why: `grade ${grade} on a trade-cautiously close: a quarter size, the best setup only` };
   if (slot === 'weak') return grade === 'B' || grade === 'B+' ? { pct: 0, slot, why: `grade ${grade} on a weak close: skip` } : { pct: base / 2, slot, why: `grade ${grade} on a weak close: half size` };
   return { pct: base, slot, why: `grade ${grade} at a ${slot === 'prime' ? 'prime' : 'good'} close` };
 }
 const NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 const VERDICT = { strong: 'Strong day', mixed: 'Mixed day', weak: 'Weak day' };
-const ALWAYS = [
-  ['Hours', 'Trade 8 AM to 4 PM: only the 08:00, 12:00 and 16:00 closes. No trades between closes. At 20:00, 00:00 and 04:00 (Mon–Thu) take only the 🌃 Late A++ (NY open, 4h RSI stretched) at 00:00 and 04:00 at 0.5%, and at 0.25% the 🌊 NY fade at 04:00 and the 🌙 Midnight sweep at 00:00 (an A where BTC swept the same way). The main-close A++ (BTC swept) is a skip there: it made +0.23R a trade. No new trades at all on Fri–Sun: hold runners from the week.'],
-  ['Grades', 'Trade A++ (BTC swept with it) at 2%, A+ (4h RSI stretched: under 40 for a long, over 60 for a short) and A at 1%. At the late closes, the 🌃 Late A++ (NY open, 4h RSI stretched) and the 🌊 NY fade, as above. Be cautious with plain B: it lost money in the backtest. Mostly avoid C: trading against yesterday’s NY bias had no edge. C++ (a C fading a 2%+ NY session at 04:00) is tracking only.'],
-  ['Entry', 'At the 4h close, stop at the wick, target at the opposing level.'],
-  ['Per close', 'At most 2 new trades on one close, 5 open in all. If more qualify, take the best grade first (A++, then A+, then A), then the highest R:R. The alerts mark them 👉 pick.'],
-  ['Scale in', 'At +1R add the same size and move all stops to your entry. At +2R add half size and move all stops to break-even.'],
-  ['Never', 'Average down, take profit early, or move a stop further away.'],
-];
 const pctText = v => `${+v.toFixed(2)}%`;
 const OPEN_KEY = 'perp-dojo:playbook-rules';
 const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text !== undefined) e.textContent = text; return e; };
@@ -116,63 +132,142 @@ export function tickPlaybook(root, now = Date.now()) {
   for (const e of root.querySelectorAll('[data-at]')) { const t = countdown(Number(e.dataset.at), now); if (e.textContent !== t) e.textContent = t; }
 }
 
-// nyLive: today's NY session is running (new setups can't be the main-close A++, A+ or A)
-// equity: account equity in USD (null if unknown); hidden: the balance is masked
-export function renderPlaybook(root, { now = new Date(), nyLive = false, equity = null, hidden = false, money = v => `$${Math.round(v)}` } = {}) {
-  const d = now.getDay(), [verdict, avg, win, share, tips] = DAYS[d], next = nextClose(now);
-  // only rebuild when something shown changes: the dashboard re-renders often,
-  // and rebuilding would undo an open or close the moment it happens
-  const key = `${now.toDateString()}:${nyLive}:${next ? `${next.i}${next.now}` : 'done'}:${equity === null ? '-' : Math.round(equity)}:${hidden}`;
-  if (root.dataset.key === key && root.childElementCount) return;
-  root.dataset.key = key;
+// How each weekday usually plays (1-year backtest, A-grades, your time) and the plan for it: [how it plays, the plan]
+const DAY_PLAY = [
+  ['Setups pile up, but weekend chop sweeps the stops: 19% of A-grades reached the target.', 'No new trades. Hold runners; Sunday night’s 00:00 and 04:00 start the week’s late setups.'],
+  ['The busiest day: an A-grade on most Mondays, often several at once, but only modest profit.', 'Be selective: 08:00 is where Monday pays. Best grade first, 2 a close at most.'],
+  ['The best day: 44% of A-grades reached the target, and the bias tends to carry.', 'Full plan with confidence at every close. Tuesday night is the best night for the 🌃 Late A++.'],
+  ['Strong, but carried by a few very large winners; most trades still stop out.', 'Full plan and hold to the target: the runners pay for everything. 08:00 made most of it.'],
+  ['Steady, and the trades still running into the weekend start here: they made most of Thursday’s profit.', 'Full plan at 08:00 and 12:00, half at 16:00. Let working trades run. Tonight’s late setups: caution, a quarter size.'],
+  ['Fresh entries mostly get stopped: 35% win at 1:1, against 54% Mon–Thu. The weekend comes before most targets.', 'Trade cautiously: the best A-grade of a close at a quarter size. Hold runners into the weekend.'],
+  ['The weakest day: 15% of A-grades reached the target. BTC drifts, alts chop around it.', 'No new trades. Hold runners, review the week and journal.'],
+];
 
-  const head = el('div', 'pb-head');
-  head.append(el('span', 'pb-icon', '◆'), el('b', '', `${NAMES[d]}’s playbook`), el('span', 'pb-verdict ' + verdict, VERDICT[verdict]));
-  const stat = el('span', 'pb-stat muted small', `A-grade trades: ${r(avg)} avg, ${win}% hit target · a setup on ${share}% of ${NAMES[d]}s`);
-  stat.title = 'From the 1-year backtest: A-grade setups with the full scaling plan, after fees';
-  head.append(stat);
+// ---- today's read: what New York did, the bias, and what to look for (plain English) ----
+const WEEKDAY = NAMES;
+const sessDay = x => WEEKDAY[new Date(`${x.date}T12:00:00Z`).getUTCDay()];
+const pcS = v => `${v >= 0 ? '+' : '−'}${Math.abs(v * 100).toFixed(1)}%`;
+// sessions: newest first, as nySessions returns. { story, live, liveEnd, bias, dir, from } or null.
+export function nyRead(sessions = []) {
+  const done = (sessions || []).filter(x => !x.live && !x.missing && x.bias), last = done[0];
+  if (!last) return null;
+  const live = sessions[0]?.live && !sessions[0].pending ? sessions[0] : null;
+  const pos = last.high > last.low ? (last.close - last.low) / (last.high - last.low) : 0.5;
+  const where = pos >= 0.75 ? 'near its high' : pos <= 0.25 ? 'near its low' : 'mid-range';
+  const story = Math.abs(last.change) < 0.003
+    ? `BTC went nowhere in ${sessDay(last)}’s NY session (${pcS(last.change)}).`
+    : `BTC ${last.change > 0 ? 'rose' : 'fell'} ${Math.abs(last.change * 100).toFixed(1)}% in ${sessDay(last)}’s NY session and closed ${where}.`;
+  return {
+    story, live: live ? `Today’s session is open: ${pcS(live.change)} so far.` : null, liveEnd: live?.end ?? null,
+    bias: last.bias, dir: last.bias === 'bullish' ? 'Long' : last.bias === 'bearish' ? 'Short' : null, from: sessDay(last),
+  };
+}
+// What to look for today: [{ text, cls }]. btc: { pull: nyPullbackAt(...), rsi: BTC's 1h RSI } (either may be null).
+export function lookingFor(read, { now = new Date(), nyLive = false, open = null } = {}) {
+  const d = now.getDay(), next = nextClose(now), dir = read?.dir;
+  if (!read) return { lines: [{ text: 'Reading the New York session…', cls: 'muted' }] };
+  if (!dir) return { lines: [{ text: 'No clear bias: every setup grades C. Stand aside today.', cls: 'warn' }] };
+  const side = dir === 'Long' ? 'longs' : 'shorts', other = dir === 'Long' ? 'shorts' : 'longs', lo = dir === 'Long' ? 'low' : 'high', back = dir === 'Long' ? 'above' : 'below';
+  const left = (next ? SESSION.slice(next.i) : []).filter(h => SLOTS[d][SESSION.indexOf(h)] !== 'skip');
+  const out = [];
+  if (SLOTS[d].every(q => q === 'skip')) out.push({ text: 'No new trades today. Hold runners; don’t close them for the weekend.', cls: '' });
+  else if (!left.length) out.push({ text: 'No more closes today: manage what’s open.', cls: '' });
+  else {
+    out.push({ text: `${side[0].toUpperCase() + side.slice(1)} at ${left.map(hh).join(' · ')}: a sweep of a ${lo} that closes back ${back} it.`, cls: '' });
+    out.push({ text: `Best: BTC sweeping the same way (A++) or the alt’s 4h RSI ${dir === 'Long' ? 'under 40' : 'over 60'} (A+).`, cls: '' });
+    if (left.some(h => NY_PULLBACK.hours.includes(h))) out.push({ text: 'Extra edge: BTC back half of NY’s move ✨ with its 1h RSI at 35–45 🧊.', cls: '' });
+    if (left.some(h => SLOTS[d][SESSION.indexOf(h)] === 'caution')) out.push({ text: 'Only the best one per close, at a quarter size.', cls: 'warn' });
+    out.push({ text: `Skip ${other}: against the bias they grade C.`, cls: 'muted' });
+    // room under the caps, for the next close
+    if (Number.isFinite(open)) {
+      const max = picksAt(new Date(now).setHours(left[0], 0, 0, 0)), room = Math.max(0, Math.min(max, MAX_POSITIONS - open));
+      out.push({ text: room ? `Room for ${room} new at ${hh(left[0])} (${open} of ${MAX_POSITIONS} open).` : `${open} of ${MAX_POSITIONS} open: no room for new trades until one closes.`, cls: room ? 'muted' : 'warn' });
+    }
+  }
+  if (nyLive) out.push({ text: 'NY is open: until it closes, only the 🌃 Late A++ or an A with a BTC sweep.', cls: 'warn' });
+  return { lines: out };
+}
+// BTC right now, read from the bias's side: how far it's pulled back from NY's close (✨ golden zone at
+// 50%+) and its 1h RSI (🧊 cooled off / ⚠️ stretched or extended). [{ text, cls }]
+export function btcChips(read, btc) {
+  const dir = read?.dir, chips = [];
+  if (!dir || !btc) return chips;
+  const side = dir === 'Long' ? 'longs' : 'shorts';
+  if (btc.pull && btc.pull.dir === dir) {
+    const b = btc.pull.back, pct = b > 1 ? 'all' : `${Math.max(0, Math.round(b * 100))}%`;
+    chips.push(b >= NY_PULLBACK.back ? { text: `✨ Golden zone: BTC gave back ${pct} of NY’s move`, cls: 'gold' }
+      : b < 0 ? { text: `BTC ${dir === 'Long' ? 'above' : 'below'} NY’s close: no pullback yet`, cls: 'muted' } : { text: `BTC gave back ${pct} of NY’s move`, cls: 'muted' });
+  }
+  const t = btcRsiTag(dir, btc.rsi);
+  if (t) chips.push({ text: t.kind === 'cool' ? `🧊 1h RSI ${t.rsi}: cooled off` : t.kind === 'deep' ? `⚠️ 1h RSI ${t.rsi}: stretched against ${side}` : `⚠️ 1h RSI ${t.rsi}: already extended, wait for a cool-off`, cls: t.kind === 'cool' ? 'cool' : 'warn' });
+  else if (Number.isFinite(btc.rsi)) chips.push({ text: `1h RSI ${Math.round(btc.rsi)}: neutral`, cls: 'muted' });
+  return chips;
+}
 
-  // today's three closes, rated, with the one coming up marked
-  const slots = el('div', 'pb-slots');
-  slots.append(el('span', 'pb-slots-label', 'Trade the closes'));
-  SESSION.forEach((h, i) => {
-    const q = SLOTS[d][i], chip = el('span', `pb-slot ${q}` + (next?.i === i ? ' next' : '') + (next && i < next.i ? ' past' : !next ? ' past' : ''));
-    const at = new Date(now); at.setHours(h, 0, 0, 0);
-    const left = el('small', 'pb-left'); left.dataset.at = at.getTime();            // the countdown, ticked by tickPlaybook
-    left.textContent = countdown(at.getTime(), now.getTime());
-    chip.append(el('b', '', hh(h)), el('span', '', SLOT_TEXT[q]), left);
-    chip.title = { prime: 'The best close in the backtest', ok: 'Positive in the backtest', weak: 'Lost money in the backtest: half size, skip B', skip: 'New entries lost money on Fri–Sun: no new trades, hold runners' }[q];
-    slots.append(chip);
+// Everything the playbook shows, as plain data, for the alternative layouts (playbook-options.js)
+export function playbookData({ now = new Date(), nyLive = false, sessions = null, btc = null, open = null } = {}) {
+  const d = now.getDay(), [verdict, avg, win, share] = DAYS[d], next = nextClose(now), read = nyRead(sessions);
+  const lateDay = h => (h === 20 ? d : (d + 1) % 7);
+  const tonight = BPLUS_HOURS.filter(h => { const x = lateDay(h); return x >= 1 && x <= 6; });
+  // the tier of each close today (the 00:00 / 04:00 at the start of the day close last night's late setups)
+  const lateTier = day => (day >= 1 && day <= 4 ? 'late' : day === 5 || day === 6 ? 'caution' : 'none');
+  const closes = [0, 4, 8, 12, 16, 20].map(h => {
+    const i = SESSION.indexOf(h), at = new Date(now).setHours(h, 0, 0, 0);
+    return { h, at, tier: i >= 0 ? SLOTS[d][i] : h === 20 ? 'none' : lateTier(d), label: i >= 0 ? SLOT_TEXT[SLOTS[d][i]] : h === 20 ? '—' : { late: 'Late', caution: 'Caution', none: '—' }[lateTier(d)] };
   });
+  return {
+    d, day: NAMES[d], verdict, verdictText: VERDICT[verdict], avg, win, share, next, nyLive, open, btc, read,
+    slots: SESSION.map((h, i) => ({ h, q: SLOTS[d][i], text: SLOT_TEXT[SLOTS[d][i]], at: new Date(now).setHours(h, 0, 0, 0) })),
+    closes, tonight, tonightCaution: tonight.length > 0 && [5, 6].includes(lateDay(0)),
+    look: lookingFor(read, { now, nyLive, open }).lines, chips: btcChips(read, btc), play: DAY_PLAY[d],
+    history: (sessions || []).filter(x => !x.live && !x.missing && x.bias).slice(0, 5).reverse(),
+    live: sessions?.[0]?.live && !sessions[0].pending ? sessions[0] : null,
+    room: Number.isFinite(open) && next ? Math.max(0, Math.min(picksAt(new Date(now).setHours(SESSION[next.i], 0, 0, 0)), MAX_POSITIONS - open)) : null,
+    rsiTag: read?.dir ? btcRsiTag(read.dir, btc?.rsi) : null,
+  };
+}
+export { countdown as pbCountdown, hh as pbHour, r as pbR, sessDay as pbSessDay, pcS as pbPct };
 
-  // tonight's late closes: B+ and the Midnight sweep at a quarter percent, when the close falls Mon–Thu
-  // (20:00 is today; 00:00 and 04:00 close tomorrow)
-  const lateOk = h => { const day = h === 20 ? d : (d + 1) % 7; return day >= 1 && day <= 4; };
-  const late = OFF_HOURS.filter(lateOk), lateChip = el('span', 'pb-slot late' + (late.length ? '' : ' off'));
-  lateChip.append(el('b', '', late.length ? late.map(hh).join(' · ') : 'Late closes'), el('span', '', late.some(h => BPLUS_HOURS.includes(h)) ? `🌃 A++ ${pctText(LATE_APP_PCT)} at ${late.filter(h => BPLUS_HOURS.includes(h)).map(hh).join(' / ')} · 🌊 NY fade, 🌙 A ${pctText(OFF_HOURS_PCT)}` : 'no new trades'));
-  lateChip.title = late.length ? 'Outside the main closes, Monday to Thursday: the 🌃 Late A++ (NY open, 4h RSI stretched) at 00:00 and 04:00 at 0.5%; the 🌊 NY fade at 04:00 and the 🌙 Midnight sweep at 00:00 at 0.25%' : 'No new trades outside the main closes on Friday to Sunday';
-  slots.append(el('span', 'pb-slots-sep', 'then'), lateChip);
+// The setups to use today and their size, from the plan (proposedRisk): the main closes left in the day,
+// then tonight's late closes. [{ name, what, size, tonight, caution }]
+export function strategiesToday(now = new Date()) {
+  const d = now.getDay(), at = (h, plus = 0) => { const t = new Date(now); t.setDate(t.getDate() + plus); t.setHours(h, 0, 0, 0); return t.getTime(); };
+  const out = [], mains = SESSION.filter((h, i) => SLOTS[d][i] !== 'skip');
+  for (const [g, name, what] of [['A++', '★ A++', 'BTC swept the same way'], ['A+', 'A+', 'alt’s 4h RSI stretched'], ['A', 'A', 'with the bias']]) {
+    const by = mains.map(h => [h, proposedRisk(g, at(h))]).filter(([, r]) => r.pct > 0);
+    if (!by.length) continue;
+    const top = Math.max(...by.map(([, r]) => r.pct)), others = by.filter(([, r]) => r.pct !== top);
+    const note = others.length ? others.map(([h, r]) => `${pctText(r.pct)} at ${hh(h)}`).join(', ') : '';
+    out.push({ name, what, pct: pctText(top), note, size: pctText(top) + (note ? ` · ${note}` : ''), caution: by.every(([, r]) => r.slot === 'caution') });
+  }
+  for (const [g, tag, hours, name, what] of [['A++', 'late', [0, 4], '🌃 Late A++', 'NY open, RSI stretched'], ['A', 'midnight', [0], '🌙 Midnight sweep', 'BTC swept mid-NY'], ['B+', 'fade', [4], '🌊 NY fade', 'fades a 2%+ NY session']]) {
+    const by = hours.map(h => [h, proposedRisk(g, at(h, 1), { tag })]).filter(([, r]) => r.pct > 0);
+    const same = by.every(([, r]) => r.pct === by[0][1].pct);
+    if (by.length) out.push({ name, what, pct: pctText(by[0][1].pct), note: same ? by.map(([h]) => hh(h)).join(' · ') : by.map(([h, r]) => `${pctText(r.pct)} at ${hh(h)}`).join(' · '), size: same ? `${pctText(by[0][1].pct)} at ${by.map(([h]) => hh(h)).join(' / ')}` : by.map(([h, r]) => `${pctText(r.pct)} at ${hh(h)}`).join(' · '), tonight: true, caution: by.every(([, r]) => r.slot === 'caution') });
+  }
+  return out;
+}
 
-  const list = el('ul', 'pb-tips');
-  for (const t of tips) list.append(el('li', '', t));
-  if (nyLive) list.append(el('li', 'pb-live', 'The NY session is open right now: until it closes, new setups are the 🌃 Late A++ (4h RSI stretched), an A with a BTC sweep, or a B.'));
-
+// The rules, short, as a collapsible block (open state remembered in this browser)
+export function guidelines({ equity = null, hidden = false, money = v => `$${Math.round(v)}` } = {}) {
   const rules = el('details', 'pb-rules'), sum = el('summary');
   try { rules.open = localStorage.getItem(OPEN_KEY) === '1'; } catch {}
-  const label = () => { sum.textContent = rules.open ? 'Hide guidelines' : 'Show guidelines'; };
+  const label = () => { sum.textContent = rules.open ? 'Hide guidelines' : 'Guidelines'; };
   rules.addEventListener('toggle', () => { label(); try { localStorage.setItem(OPEN_KEY, rules.open ? '1' : '0'); } catch {} });
   label();
-  rules.append(sum);
-  const dl = el('dl');
-  // risk per grade, in dollars from the current equity
-  const dollars = g => (equity && !hidden ? ` (${money(equity * RISK_PCT[g] / 100)})` : '');
-  const risk = `A++ ${pctText(RISK_PCT['A++'])}${dollars('A++')} · A+ ${pctText(RISK_PCT['A+'])}${dollars('A+')} · A ${pctText(RISK_PCT.A)}${dollars('A')} · B ${pctText(RISK_PCT.B)}${dollars('B')} of equity per trade, half on a weak close, none on Fri–Sun. At most 2 new a close, 5 open.`;
-  for (const [k, v] of [...ALWAYS, ['Risk', risk + (equity === null ? ' Connect your account to see it in dollars.' : '')]]) { const row = el('div'); row.append(el('dt', '', k), el('dd', '', v)); dl.append(row); }
-  rules.append(dl);
-
-  root.replaceChildren(head, slots, list, rules);
-  root.className = 'day-playbook c12 pb-' + verdict;
-  root.hidden = false;
+  const usd = g => (equity && !hidden ? ` (${money(equity * RISK_PCT[g] / 100)})` : '');
+  const guide = [
+    ['🎯', 'Entry', 'At the 4h close · stop at the wick · target the opposing level'],
+    ['➕', 'Scale in', '+1R: add 1×, stops → entry · +2R: add ½×, stops → break-even'],
+    ['📏', 'Risk', `A++ ${pctText(RISK_PCT['A++'])}${usd('A++')} · A+ / A ${pctText(RISK_PCT.A)}${usd('A')} · half on Weak, ¼ on Caution`],
+    ['🔢', 'Limits', `${PICKS_PER_CLOSE} new a close (1 on Caution) · ${MAX_POSITIONS} open · best grade, then R:R`],
+    ['🌙', 'Late', `00:00 / 04:00, Sun–Wed nights: 🌃 Late A++ ${pctText(LATE_APP_PCT)} · 🌙 / 🌊 ${pctText(OFF_HOURS_PCT)} · Thu–Fri nights ¼`],
+    ['🚫', 'Never', 'Average down · take profit early · widen a stop · trade C'],
+  ];
+  const g = el('div', 'pb-guide');
+  for (const [i, k, v] of guide) { const row = el('div', 'pb-g'); row.append(el('span', 'pb-g-i', i), el('b', '', k), el('span', '', v)); g.append(row); }
+  rules.append(sum, g);
+  return rules;
 }
 
 // BTC vs the alt in a new trade's first 3 candles: a long where BTC's 4h candle breaks the

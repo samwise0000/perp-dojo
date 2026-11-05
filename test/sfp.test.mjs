@@ -224,7 +224,19 @@ test('proposed risk: by grade, half on a weak close, none outside the trading da
   assert.equal(proposedRisk('A+', at(1, 20)).pct, 0);                  // the RSI A+ isn't taken at the late closes
   assert.equal(proposedRisk('A', at(1, 12)).pct, 1);
   assert.equal(proposedRisk('A', at(4, 16)).pct, 0.5);                 // Thursday 16:00 is weak: half
-  assert.equal(proposedRisk('A', at(5, 8)).pct, 0);                    // Friday: no new trades
+  assert.equal(proposedRisk('A', at(5, 8)).pct, 0.25);                 // Friday: trade cautiously, a quarter size
+  assert.equal(proposedRisk('A++', at(5, 16)).pct, 0.5);
+  assert.equal(proposedRisk('B', at(5, 12)).pct, 0);                   // no B
+  const { picksAt } = await import('../public/day-playbook.js');
+  assert.equal(picksAt(at(5, 12)), 1); assert.equal(picksAt(at(2, 12)), 2);   // the best setup only on Friday
+  // Friday night (Saturday's 00:00 / 04:00): the late setups, trade-cautiously
+  assert.equal(proposedRisk('A++', at(6, 0), { tag: 'late' }).pct, 0.125);
+  assert.equal(proposedRisk('A++', at(6, 4), { tag: 'late' }).slot, 'caution');
+  assert.equal(proposedRisk('A', at(6, 0), { tag: 'midnight' }).pct, 0.0625);
+  assert.equal(proposedRisk('A+', at(6, 0)).pct, 0);                    // still only the late setups
+  assert.equal(proposedRisk('A++', at(5, 0), { tag: 'late' }).pct, 0.125);   // Thursday night: caution too
+  assert.match(proposedRisk('A++', at(5, 4), { tag: 'late' }).why, /Thursday night: trade cautiously/);
+  assert.equal(picksAt(at(6, 4)), 1);
   assert.equal(proposedRisk('A++', at(6, 12)).pct, 0);                 // nor Saturday
   assert.match(proposedRisk('A', at(0, 16)).why, /weekend/);
   assert.equal(proposedRisk('A', at(1, 20)).pct, 0);                   // outside the trading day
@@ -239,13 +251,13 @@ test('proposed risk: by grade, half on a weak close, none outside the trading da
   assert.equal(proposedRisk('A++', at(2, 0)).pct, 0);                  // the main-close A++ is a skip late
   assert.equal(proposedRisk('B+', at(4, 4)).pct, 0.25);
   assert.equal(proposedRisk('B+', at(1, 20)).pct, 0);                  // ...not at 20:00
-  assert.equal(proposedRisk('B+', at(5, 0)).pct, 0);                   // ...not on Friday
+  assert.equal(proposedRisk('B+', at(5, 0)).pct, 0.0625);              // Thursday night: a quarter
   assert.equal(proposedRisk('B', at(2, 0)).pct, 0);                    // plain B: never
   assert.equal(proposedRisk('A', at(2, 0), { tag: 'midnight' }).pct, 0.25);   // 🌙 Midnight sweep: Tue 00:00
   assert.match(proposedRisk('A', at(2, 0), { tag: 'midnight' }).why, /Midnight sweep/);
   assert.equal(proposedRisk('A', at(2, 0)).pct, 0);                    // an A at 00:00 without BTC's sweep: no
   assert.equal(proposedRisk('A', at(2, 4), { tag: 'midnight' }).pct, 0);      // only at 00:00
-  assert.equal(proposedRisk('A', at(5, 0), { tag: 'midnight' }).pct, 0);      // not on Friday
+  assert.equal(proposedRisk('A', at(5, 0), { tag: 'midnight' }).pct, 0.0625);   // Thursday night: a quarter
   assert.equal(proposedRisk('A', at(1, 8), { tag: 'midnight' }).pct, 1);      // at a main close it's just an A
   assert.equal(proposedRisk('C', at(1, 8)).pct, 0);
 });
@@ -367,3 +379,23 @@ test('forward test: positions, matching to signals, R by the signal stop', async
   assert.equal(rep.rows.find(r => r.symbol === 'SUIUSDT').sig, null);
 });
 function DAY_MS() { return 864e5; }
+
+test('playbook read: New York in plain English, the bias, and what to look for', async () => {
+  const { nyRead, lookingFor } = await import('../public/day-playbook.js');
+  const wed = { date: '2026-11-04', start: 0, end: 1, open: 100, close: 102.5, high: 103, low: 99.5, change: 0.025, bias: 'bullish' };
+  const r = nyRead([wed]);
+  assert.equal(r.story, 'BTC rose 2.5% in Wednesday’s NY session and closed near its high.');
+  assert.equal(r.dir, 'Long'); assert.equal(r.live, null);
+  assert.match(nyRead([{ ...wed, close: 100.1, change: 0.001, bias: 'bullish' }]).story, /went nowhere/);
+  assert.match(nyRead([{ date: '2026-11-05', live: true, change: -0.006 }, wed]).live, /open: −0\.6% so far/);
+  const thu11 = new Date(2026, 10, 5, 11);                                // Thursday 11:00 local: 12:00 and 16:00 left
+  const lf = lookingFor(r, { now: thu11, open: 4 });
+  assert.equal(lf.lines[0].text, 'Longs at 12:00 · 16:00: a sweep of a low that closes back above it.');
+  assert.match(lf.lines.map(x => x.text).join('|'), /Skip shorts: against the bias they grade C\.\|Room for 1 new at 12:00 \(4 of 5 open\)/);
+  const { btcChips } = await import('../public/day-playbook.js');
+  assert.deepEqual(btcChips(r, { pull: { dir: 'Long', back: 0.6 }, rsi: 41 }).map(c => c.cls), ['gold', 'cool']);
+  assert.match(btcChips(r, { pull: { dir: 'Long', back: 0.2 }, rsi: 69 }).map(c => c.text).join('|'), /gave back 20% of NY’s move\|⚠️ 1h RSI 69: already extended/);
+  assert.match(lookingFor(r, { now: new Date(2026, 10, 7, 11) }).lines[0].text, /No new trades today/);           // Saturday
+  assert.match(lookingFor(r, { now: new Date(2026, 10, 6, 11) }).lines.map(x => x.text).join('|'), /quarter size/);   // Friday
+  assert.match(lookingFor({ ...r, dir: null }).lines[0].text, /Stand aside/);
+});

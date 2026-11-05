@@ -132,14 +132,14 @@ async function show() {
     ['Entry → mark', `${f.price(t.entry)} → ${f.price(t.exit)}`],
     ['Opened', Number.isFinite(t.openedAt) ? f.dateTime(t.openedAt) : 'Over 7 days ago'],
     ['Held so far', f.duration(t.duration)],
-    ['Size', `${t.size.toLocaleString(undefined, { maximumFractionDigits: 6 })} · ${t.leverage}×`],
+    ['Size', `${t.size.toLocaleString(undefined, { maximumFractionDigits: 6 })}${t.leverage ? ` · ${t.leverage}×` : ''}`],
     ['Stop-loss / take-profit', `${t.sl ? f.price(t.sl) : 'none'} / ${t.tp ? f.price(t.tp) : 'none'}`, t.sl ? '' : 'neg'],
   ] : [
     ['Net P&L', f.money(t.pnl), t.pnl > 0 ? 'pos' : t.pnl < 0 ? 'neg' : ''],
     ['Entry → exit', `${f.price(t.entry)} → ${f.price(t.exit)}`],
     ['Opened', Number.isFinite(t.openedAt) ? f.dateTime(t.openedAt) : 'Before your pulled data'],
     ['Held', f.duration(t.duration)],
-    ['Size', `${t.size.toLocaleString(undefined, { maximumFractionDigits: 6 })} · ${t.leverage}×`],
+    ['Size', `${t.size.toLocaleString(undefined, { maximumFractionDigits: 6 })}${t.leverage ? ` · ${t.leverage}×` : ''}`],
     ['Fees + funding', f.money(-(t.fees + (t.funding || 0)))],
   ];
   const dl = $('#rpStats');

@@ -7,7 +7,7 @@
 import { loadSignals } from './signals.js';
 import { showOnChart } from './signal-chart.js';
 import { H4, GRADE_ORDER } from './sfp.js';
-import { proposedRisk, PICKS_PER_CLOSE, setupName } from './day-playbook.js';
+import { proposedRisk, picksAt, setupName } from './day-playbook.js';
 
 const DAY = 864e5, GOAL = 100, START_KEY = 'perp-dojo:forward-start';
 const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text !== undefined) e.textContent = text; return e; };
@@ -58,7 +58,7 @@ export function pickSet(signals) {
   const picks = new Set();
   for (const g of byClose.values()) {
     g.sort((a, b) => GRADE_ORDER.indexOf(a.grade.grade) - GRADE_ORDER.indexOf(b.grade.grade) || b.trade.rr - a.trade.rr);
-    g.slice(0, PICKS_PER_CLOSE).forEach(s => picks.add(s));
+    g.slice(0, picksAt(g[0].t + H4)).forEach(s => picks.add(s));
   }
   return picks;
 }
@@ -127,7 +127,7 @@ export async function renderForward(root, { ctx, trades, execs, fmt }) {
   const { rows, missed, expect } = forwardReport({ trades, execs, signals: data.signals, start: state.start });
   const on = rows.filter(r => r.onPlan), scored = on.filter(r => r.R !== null), off = rows.filter(r => !r.onPlan);
   const liveAvg = avg(scored.map(r => r.R)), planSame = avg(scored.filter(r => r.plan !== null).map(r => r.plan));
-  const busy = on.filter(r => r.sig && data.signals.filter(s => s.t === r.sig.t && takeable(s)).length > PICKS_PER_CLOSE);
+  const busy = on.filter(r => r.sig && data.signals.filter(s => s.t === r.sig.t && takeable(s)).length > picksAt(r.sig.t + H4));
 
   // head: the start date and progress
   const head = el('div', 'card c12 fw-head');

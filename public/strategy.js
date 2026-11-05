@@ -4,7 +4,7 @@
 // playbook do. Backtest figures are a snapshot (past year to 4 Nov 2026,
 // scaling plan, after Bybit fees) and say so on the page.
 import { ALERT_SETTINGS, BPLUS_RSI, scalePlan, DEFAULT_PAIRS } from './sfp.js';
-import { RISK_PCT, OFF_HOURS, OFF_HOURS_PCT, BPLUS_HOURS, MIDNIGHT_HOURS, LATE_APP_PCT, SESSION, SLOTS, MAX_POSITIONS, PICKS_PER_CLOSE } from './day-playbook.js';
+import { RISK_PCT, OFF_HOURS, OFF_HOURS_PCT, BPLUS_HOURS, MIDNIGHT_HOURS, LATE_APP_PCT, SESSION, SLOTS, MAX_POSITIONS, PICKS_PER_CLOSE, CAUTION } from './day-playbook.js';
 import { zonedToUtc, NY_TZ } from './bias.js';
 
 const AS_OF = '4 Nov 2026';
@@ -124,12 +124,15 @@ function weekGrid() {
       const q = SLOTS[d][i];
       if (q === 'skip') return ['off', 'Skip', 'no new trades, hold runners'];
       const full = `A++ ${pct(RISK_PCT['A++'])} · A+ ${pct(RISK_PCT['A+'])} · A ${pct(RISK_PCT.A)}`;
+      if (q === 'caution') return ['caution', 'Caution', `best A-grade only · A++ ${pct(RISK_PCT['A++'] * CAUTION.share)} · A+ / A ${pct(RISK_PCT.A * CAUTION.share)}`];
       return q === 'weak' ? ['weak', 'Weak', 'A++ / A+ / A at half size'] : q === 'prime' ? ['prime', 'Prime', full] : ['ok', 'OK', full];
     }
     // a late close counts on the weekday it closes: 20:00 is the same day, 00:00 and 04:00 the next
     const day = h === 20 ? d : (d + 1) % 7;
-    if (day < 1 || day > 4) return ['off', '—', 'no new trades'];
-    return ['late', 'Late', BPLUS_HOURS.includes(h) ? `🌃 A++ ${pct(LATE_APP_PCT)} · ${MIDNIGHT_HOURS.includes(h) ? '🌙 A' : '🌊 NY fade'} ${pct(OFF_HOURS_PCT)}` : 'no new trades'];
+    // Friday night's 00:00 / 04:00 (they close on Saturday): the same late setups, trade-cautiously
+    if ((day === 5 || day === 6) && BPLUS_HOURS.includes(h)) return ['caution', 'Caution', `best one only · 🌃 A++ ${pct(LATE_APP_PCT * CAUTION.share)} · ${MIDNIGHT_HOURS.includes(h) ? '🌙 A' : '🌊 NY fade'} ${pct(OFF_HOURS_PCT * CAUTION.share)}`];
+    if (day < 1 || day > 4 || !BPLUS_HOURS.includes(h)) return ['off', '—', 'no new trades'];
+    return [h === 0 ? 'night mid' : 'night four', h === 0 ? 'Midnight' : '4 AM', BPLUS_HOURS.includes(h) ? `🌃 A++ ${pct(LATE_APP_PCT)} · ${MIDNIGHT_HOURS.includes(h) ? '🌙 A' : '🌊 NY fade'} ${pct(OFF_HOURS_PCT)}` : 'no new trades'];
   };
   const head = `<div class="st-wk-h"></div>${closes.map((h, i) => `<div class="st-wk-h${i === SESSION.length ? ' st-wk-gap' : ''}">${hh(h)}${i >= SESSION.length && h !== 20 ? '<small>next day</small>' : ''}</div>`).join('')}`;
   const rows = idx.map((d, r) => `<div class="st-wk-d">${days[r]}</div>${closes.map((h, i) => { const [c, t, s] = cell(d, h); return `<div class="st-wk-c ${c}${i === SESSION.length ? ' st-wk-gap' : ''}" title="${days[r]} ${hh(h)}: ${s}"><b>${t}</b><span>${s}</span></div>`; }).join('')}`).join('');
@@ -168,6 +171,7 @@ const SETUPS = [
   { grades: ['A++'], name: '★ A++ · 🌃 Late A++', when: '00:00 / 04:00, Mon–Thu, NY open, RSI stretched', c: [1, 0, 0, 1, 0], risk: () => pct(LATE_APP_PCT), take: 'yes', n: 135, days: 54, avg: 1.69, total: 228, wo: 125, prof: 36, how: 'Full plan at half a percent. What used to be B+.' },
   { grades: ['A+'], name: 'A+', when: 'Main closes, Mon–Thu', risk: () => `${pct(RISK_PCT['A+'])} (½ on Thu 16:00)`, c: [1, 1, 0, 1, null], take: 'yes', n: 229, days: 96, avg: 2.70, total: 619, wo: 297, prof: 35, how: 'Full plan. The best-proven setup: the core of the strategy.' },
   { grades: ['A'], name: 'A', when: 'Main closes, Mon–Thu', risk: () => `${pct(RISK_PCT.A)} (½ on Thu 16:00)`, c: [1, 1, 0, 0, null], take: 'yes', n: 122, days: 75, avg: 1.10, total: 134, wo: 33, prof: 49, how: 'Full plan. Weaker without the RSI stretch, still positive in both halves.' },
+  { grades: ['A++', 'A+', 'A'], name: 'A++ / A+ / A', when: 'Main closes, Friday (trade cautiously)', c: [1, 1, null, null, null], risk: () => `¼, best one only: A++ ${pct(RISK_PCT['A++'] * CAUTION.share)} · A+ / A ${pct(RISK_PCT.A * CAUTION.share)}`, take: 'track', n: 64, days: 28, avg: -0.47, total: -30, wo: -48, prof: 25, how: 'Trade cautiously: Friday entries lost in both halves of the year, mostly stopped before the weekend, but a runner into it can still start here. The best setup of a close only, at a quarter size.' },
   { grades: ['A'], name: 'A · 🌙 Midnight sweep', when: '00:00, Mon–Thu, BTC swept the same way', c: [1, 0, 1, null, null], risk: () => pct(OFF_HOURS_PCT), take: 'track', n: 15, days: 7, avg: 2.64, total: 40, wo: 8, prof: 60, how: 'Full plan at tracking size. Thin sample.' },
   { grades: ['B+'], name: 'B+ · 🌊 NY fade', when: '04:00, Mon–Thu, fading a 2%+ NY session', risk: () => pct(OFF_HOURS_PCT), c: [1, 0, 0, 1, 1], take: 'track', n: 19, days: 4, avg: 1.09, total: 21, wo: -4, prof: 68, how: 'Part of B+, tracked on its own: +2.29R over 32 trades on all days, but only 8 days. Full plan at tracking size.' },
   { grades: ['C++'], name: '🏅 C++', when: '04:00, Mon–Thu (NY fade), full plan', c: [0, null, null, null, 1], risk: () => 'tracking', take: 'track', n: 45, days: 13, avg: 1.22, total: 55, wo: -19, prof: 40, how: 'For reference: depends on its best few days.' },
@@ -175,7 +179,7 @@ const SETUPS = [
   { grades: ['C++'], name: '🏅 C++', when: '…with a 3R target', c: [0, null, null, null, 1], risk: () => 'tracking', take: 'track', n: 45, days: 13, avg: 0.50, total: 23, wo: 14, prof: 40, how: 'First entry only, no adds. The steadiest version.' },
   // to avoid
   { grades: ['A++'], name: '★ A++', when: 'Late closes, Mon–Thu', wrongTime: true, risk: () => 'skip', c: [1, 1, 1, null, null], take: 'no', n: 11, days: 3, avg: 0.23, total: 3, wo: -3, prof: 73, how: 'Barely positive over the year (+3R in all): not worth the late night.' },
-  { grades: ['A++', 'A+', 'A'], name: 'A++ / A+ / A', when: 'Main closes, Fri–Sun', wrongTime: true, c: [1, 1, null, null, null], risk: () => 'skip', take: 'no', n: 234, days: 91, avg: -0.46, total: -107, wo: -148, prof: 27, how: 'New weekend entries lost in both halves. Hold runners from the week; don’t open new ones.' },
+  { grades: ['A++', 'A+', 'A'], name: 'A++ / A+ / A', when: 'Main closes, Sat–Sun', wrongTime: true, c: [1, 1, null, null, null], risk: () => 'skip', take: 'no', n: 170, days: 63, avg: -0.45, total: -77, wo: -111, prof: 28, how: 'New weekend entries lost in both halves. Hold runners from the week; don’t open new ones.' },
   { grades: ['A+', 'A'], name: 'A+ / A', when: 'Other late closes (20:00, 04:00, 00:00 without a BTC sweep)', wrongTime: true, c: [1, null, null, null, null], risk: () => 'skip', take: 'no', n: 118, days: 48, avg: -0.33, total: -39, wo: -67, prof: 37, how: 'Outside the main closes an A needs BTC sweeping with it.' },
   { grades: ['A++'], name: '★ A++ · 🌃 Late A++', when: '20:00, Mon–Thu, NY open, RSI stretched', wrongTime: true, c: [1, 0, 0, 1, 0], risk: () => 'skip', take: 'no', n: 48, days: 35, avg: -0.62, total: -30, wo: -34, prof: 33, how: 'Lost in both halves: right at the NY open the move isn’t done.' },
   { grades: ['B'], name: 'B', when: 'Any close', c: [1, 0, 0, 0, null], risk: () => 'monitor', take: 'no', n: 264, days: 130, avg: -0.24, total: -64, wo: -90, prof: 32, how: 'The bias may be going stale and nothing backs it up.' },
@@ -328,27 +332,27 @@ export function renderStrategy(root) {
     <h3 class="st-avoid-h">✗ Weak grades</h3>
     <p>The setup itself has no edge: B because yesterday’s bias may be going stale with nothing backing it up, C because it trades against the bias.</p>
     ${setupTable(SETUPS.filter(x => x.take === 'no' && !x.wrongTime), true)}
-    <p class="muted small">The weekend row is the costliest: new A-grade entries on Friday to Sunday lost in both halves of the year, so the playbook skips them. Runners already open from the week are a different story: hold them.</p>
+    <p class="muted small">The weekend row is the costliest: new A-grade entries on Saturday and Sunday lost in both halves of the year, so the playbook skips them. Friday lost too, but stays open with caution: the best A-grade setup of a close, at a quarter size. Runners already open from the week are a different story: hold them.</p>
   </section>
 
   <section id="st-when" class="card c12 accented st-sec" style="--a: var(--a5)">
     <div class="kicker">6 · When</div>
     <h2>The closes you trade</h2>
-    <p>The same setup does very differently by hour and weekday. Most of the profit came from the <b>08:00, 12:00 and 16:00 closes, Monday to Thursday</b> (your time). Outside those, A-grade trades lost money overall (−0.30R a trade over 529). Only a few setups are taken there, at a half or a quarter percent (the 🌃 Late A++, 🌊 NY fade and 🌙 Midnight sweep), and nothing new at all on Friday to Sunday.</p>
+    <p>The same setup does very differently by hour and weekday. Most of the profit came from the <b>08:00, 12:00 and 16:00 closes, Monday to Thursday</b> (your time). Outside those, A-grade trades lost money overall (−0.30R a trade over 529). Only a few setups are taken there, at a half or a quarter percent (the 🌃 Late A++, 🌊 NY fade and 🌙 Midnight sweep), Friday is trade-cautiously (the best A-grade setup only, a quarter size), and nothing new on Saturday and Sunday.</p>
     ${weekGrid()}
-    <div class="st-legend"><span class="prime">Prime</span> the best close <span class="ok">OK</span> positive <span class="weak">Weak</span> lost money: half size, skip B <span class="off">Skip</span> weekend: no new trades <span class="late">Late</span> tracking size only <span class="off">—</span> no new trades</div>
-    <p class="muted small">No new trades between closes. Late closes count on the day they close: Monday 00:00 is in, Friday 00:00 is out.</p>
+    <div class="st-legend"><span class="prime">Prime</span> the best close <span class="ok">OK</span> positive <span class="weak">Weak</span> lost money: half size, skip B <span class="caution">Caution</span> trade cautiously: the best A-grade only, a quarter size <span class="off">Skip</span> weekend: no new trades <span class="mid">Midnight</span> <span class="four">4 AM</span> late setups at tracking size <span class="off">—</span> no new trades</div>
+    <p class="muted small">No new trades between closes. Late closes count on the day they close: Monday 00:00 is in, Thursday and Friday nights’ 00:00 / 04:00 are trade-cautiously.</p>
   </section>
 
   <section id="st-risk" class="card c6 accented st-sec" style="--a: var(--a4)">
     <div class="kicker">7 · Risk</div>
     <h2>Size by grade</h2>
-    <div class="table-wrap"><table class="data compact st-risk-t"><thead><tr><th>Grade</th><th>Main closes, Mon–Thu</th><th>Thu 16:00 (weak)</th><th>Late closes (Mon–Thu)</th></tr></thead><tbody>
-      <tr><td>${badge('A++')}</td><td>${pct(RISK_PCT['A++'])}</td><td>${pct(RISK_PCT['A++'] / 2)} (Thu 16:00)</td><td>${pct(LATE_APP_PCT)} as 🌃 Late A++ (00:00 / 04:00)</td></tr>
-      <tr><td>${badge('A+')}</td><td>${pct(RISK_PCT['A+'])}</td><td>${pct(RISK_PCT['A+'] / 2)} (Thu 16:00)</td><td>— (⛔)</td></tr>
-      <tr><td>${badge('A')}</td><td>${pct(RISK_PCT.A)}</td><td>${pct(RISK_PCT.A / 2)} (Thu 16:00)</td><td>${pct(OFF_HOURS_PCT)} at 00:00 as the 🌙 Midnight sweep</td></tr>
-      <tr><td>${badge('B+')} 🌊</td><td>—</td><td>—</td><td>${pct(OFF_HOURS_PCT)} at 04:00</td></tr>
-      <tr><td>${badge('B')}</td><td>—</td><td>—</td><td>monitor</td></tr>
+    <div class="table-wrap"><table class="data compact st-risk-t"><thead><tr><th>Grade</th><th>Main closes, Mon–Thu</th><th>Weak: Thu 16:00</th><th>Caution: Friday</th><th>Late closes (Mon–Thu)</th></tr></thead><tbody>
+      <tr><td>${badge('A++')}</td><td>${pct(RISK_PCT['A++'])}</td><td>${pct(RISK_PCT['A++'] / 2)}</td><td>${pct(RISK_PCT['A++'] * CAUTION.share)}</td><td>${pct(LATE_APP_PCT)} as 🌃 Late A++ (00:00 / 04:00)</td></tr>
+      <tr><td>${badge('A+')}</td><td>${pct(RISK_PCT['A+'])}</td><td>${pct(RISK_PCT['A+'] / 2)}</td><td>${pct(RISK_PCT['A+'] * CAUTION.share)}</td><td>— (⛔)</td></tr>
+      <tr><td>${badge('A')}</td><td>${pct(RISK_PCT.A)}</td><td>${pct(RISK_PCT.A / 2)}</td><td>${pct(RISK_PCT.A * CAUTION.share)}</td><td>${pct(OFF_HOURS_PCT)} at 00:00 as the 🌙 Midnight sweep</td></tr>
+      <tr><td>${badge('B+')} 🌊</td><td>—</td><td>—</td><td>—</td><td>${pct(OFF_HOURS_PCT)} at 04:00</td></tr>
+      <tr><td>${badge('B')}</td><td>—</td><td>—</td><td>—</td><td>monitor</td></tr>
       <tr><td>${badge('C++')}</td><td>—</td><td>—</td><td>tracking</td></tr>
       <tr><td>${badge('C')}</td><td>—</td><td>—</td><td>avoid</td></tr>
     </tbody></table></div>
@@ -389,7 +393,7 @@ export function renderStrategy(root) {
       <div><ul class="st-list">
         <li><b>Set the stop and target, then leave it.</b> The only changes are the plan’s adds and stop moves.</li>
         <li><b>Don’t take profit early.</b> The median trade lasts 8 hours, but 20R+ runners take about <b>2.7 days</b>.</li>
-        <li><b>Hold through the weekend.</b> Trades already open going into it were the biggest winners. Just don’t open new ones then.</li>
+        <li><b>Hold through the weekend.</b> Trades already open going into it were the biggest winners. Don’t open new ones on Saturday or Sunday, and keep Friday to the best setup at a quarter size.</li>
         <li><b>Expect losing streaks.</b> Losing days are normal and a 5R+ runner only comes about 1 trade in 12, so skipping trades after a few losses is how you miss the one that pays.</li>
       </ul></div>
     </div>

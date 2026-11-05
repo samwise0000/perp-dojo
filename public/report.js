@@ -322,7 +322,7 @@ export function writeReport(root, trades, ctx) {
   // cover
   const cover = h('header', 'rp-cover');
   const brand = h('div', 'rp-brand');
-  const img = h('img'); img.src = 'logo.png'; img.alt = ''; img.width = 44; img.height = 44;
+  const img = h('img'); img.src = 'logo-ink.svg'; img.alt = ''; img.width = 44; img.height = 44;   // printed on white: the inverted logo
   const bt = h('div'); bt.append(h('div', 'rp-kicker', ctx.kicker || 'Perp Dojo'), h('h1', '', ctx.title || 'Trading review'));
   brand.append(img, bt);
   const meta = h('div', 'rp-meta');

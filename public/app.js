@@ -1,4 +1,7 @@
-import { renderPlaybook as renderDayCard, positionNotes, tickPlaybook, MAX_POSITIONS, smtCheck, SMT_WINDOW } from './day-playbook.js';
+import './side.js';
+import { renderPlaybook as renderDayCard, tickSeconds } from './playbook-hero.js';
+import { batteryBody, lastTradeBody, noteTopic } from './pos-battery.js';
+import { positionNotes, tickPlaybook, MAX_POSITIONS, smtCheck, SMT_WINDOW } from './day-playbook.js';
 import {
   summarize, groupStats, periodPnl, byWeekday, byHour, histogram, insights,
   dailyMap, dayStreaks, tradingScore, calendarMonth, scaleOf, dayKey, WEEKDAYS, warnings, WARN, dailyLoss, weekStart, weekReview,
@@ -9,7 +12,8 @@ import { openReplay } from './replay.js';
 import { renderSignalsView, renderSignalsWidget, renderCloseBreakdown } from './signals.js';
 import { renderStrategy } from './strategy.js';
 import { renderForward } from './forward.js';
-import { nySessions, currentBias, NY_HOURS, NY_TZ } from './bias.js';
+import { nySessions, currentBias, NY_HOURS, NY_TZ, nyPullbackAt } from './bias.js';
+import { rsi as rsiOf } from './sfp.js';
 import { normalizeAll } from './trades.js';
 import { pull } from './sync.js';
 import { idbGet, idbSet } from './db.js';
@@ -1028,7 +1032,7 @@ function renderRecap() {
 // ---- today's playbook (public/playbook.js); re-drawn as the day or NY session changes ----
 function equityNow() { return account?.available && Number.isFinite(account.equity) ? account.equity : null; }   // hoisted: renderWarnings can run before this line
 function renderDayPlaybook() {
-  renderDayCard($('#dayPlaybook'), { nyLive: Boolean(bias?.sessions?.[0]?.live && !bias.sessions[0].pending), equity: account?.available && Number.isFinite(account.equity) ? account.equity : null, hidden: balanceHidden, money: v => money(v, { sign: false, dp: 0 }) });
+  renderDayCard($('#dayPlaybook'), { nyLive: Boolean(bias?.sessions?.[0]?.live && !bias.sessions[0].pending), sessions: bias?.sessions || null, btc: bias?.btc || null, open: positions?.available ? positions.positions.length : null, held: positions?.available ? [...positions.positions].sort((a, b) => b.value - a.value).map(p => ({ symbol: p.symbol, dir: p.dir })) : [], equity: account?.available && Number.isFinite(account.equity) ? account.equity : null, hidden: balanceHidden, money: v => money(v, { sign: false, dp: 0 }) });
 }
 
 // ---- NY bias: did the last New York session close above or below its open ----
@@ -1046,7 +1050,7 @@ async function refreshBias(force = false) {
   const now = Date.now();
   try {
     const { candles } = await apiJson(`/api/klines?category=linear&symbol=${sym}&interval=15&start=${now - 9 * DAY}&end=${now}`);
-    bias = { sym, hours, at: now, sessions: nySessions(candles, { hours, now, days: 5 }) };
+    bias = { sym, hours, at: now, sessions: nySessions(candles, { hours, now, days: 5 }), btc: btcNow(candles) };
   } catch (e) { bias = { sym, hours, at: now, error: e.message }; }
   finally { biasBusy = false; }
   if (view === 'dashboard') { renderBias(); renderDayPlaybook(); renderPositions(); }
@@ -1056,7 +1060,19 @@ async function refreshBias(force = false) {
   if (live?.live) biasFlip = setTimeout(() => refreshBias(true), Math.max(1000, live.end - Date.now() + 5000));
 }
 let biasFlip = null;
+// BTC right now for the playbook: how far it's pulled back from the last NY session (✨ golden zone)
+// and its 1h RSI (🧊 / ⚠️), both from the same 15m candles (the last one may still be forming)
+function btcNow(candles) {
+  if (!candles?.length) return null;
+  const M15 = 15 * 60_000, H1 = 3_600_000, last = candles.at(-1);
+  const hours = [];
+  for (const c of candles) { const t = Math.floor(c.t / H1) * H1, h = hours.at(-1); if (h?.t === t) { h.h = Math.max(h.h, c.h); h.l = Math.min(h.l, c.l); h.c = c.c; } else hours.push({ t, o: c.o, h: c.h, l: c.l, c: c.c }); }
+  // the last 24h of closes for the sparkline, and where the last finished NY session closed
+  const sessions = nySessions(candles, { now: last.t + M15, days: 5 }), done = sessions.find(x => !x.live && !x.missing && x.close);
+  return { pull: nyPullbackAt(candles, last.t + M15, { ms: M15 }), rsi: rsiOf(hours).at(-1) ?? null, spark: candles.slice(-96).map(c => c.c), nyClose: done?.close ?? null };
+}
 setInterval(() => { if (view === 'dashboard' && !document.hidden) { tickPlaybook($('#dayPlaybook')); renderDayPlaybook(); } }, 20_000);
+setInterval(() => { if (view === 'dashboard' && !document.hidden) tickSeconds(document); }, 1000);
 setInterval(() => { if (view === 'dashboard' && !document.hidden) refreshBias(); }, BIAS_EVERY);
 document.addEventListener('visibilitychange', () => { if (!document.hidden && view === 'dashboard') refreshBias(); });
 
@@ -1110,7 +1126,25 @@ function renderBias() {
 
 // ---- open positions: live from Bybit while the dashboard is open ----
 const POS_EVERY = 15_000;
-let positions = null, posBusy = false;
+let positions = null, posBusy = false, posIdx = 0;
+// cycling the open positions: by hand (‹ › and the dots) or every 10 s on its own. The countdown pauses while
+// the pointer's on the card or the tab is hidden, and the active dot fills up as it runs.
+const POS_EVERY_MS = 10_000;
+let posSlide = null, posLeft = POS_EVERY_MS, posTick = Date.now();
+function cyclePos(step) {
+  if (!step) return;
+  posIdx += step; posSlide = step > 0 ? 'next' : 'prev'; posLeft = POS_EVERY_MS;
+  renderPositions();
+}
+setInterval(() => {
+  const now = Date.now(), dt = now - posTick; posTick = now;
+  const n = positions?.available ? positions.positions.length : 0;
+  if (n < 2 || view !== 'dashboard' || document.hidden || $('#posCard').matches(':hover')) return;
+  posLeft -= dt;
+  const fill = document.querySelector('#posCycle .pv-dots button.on'); if (fill) fill.style.setProperty('--p', Math.min(1, 1 - posLeft / POS_EVERY_MS));
+  if (posLeft <= 0) cyclePos(1);
+}, 100);
+const lastMarks = new Map();   // each position's mark at the last refresh, for the tick flash   // posIdx: the position shown, cycled with ‹ ›
 async function refreshPositions(force = false) {
   if (posBusy || (!force && positions && Date.now() - positions.at < POS_EVERY - 1000)) return;
   posBusy = true;
@@ -1118,12 +1152,12 @@ async function refreshPositions(force = false) {
   try { positions = await apiJson('/api/positions'); }
   catch (e) { positions = { available: false, error: e.message, at: Date.now() }; }
   finally { posBusy = false; $('#posLive').classList.remove('busy'); }
-  if (view === 'dashboard') { renderPositions(); if (warnArgs) renderWarnings(...warnArgs); }
+  if (view === 'dashboard') { renderPositions(); renderDayPlaybook(); if (warnArgs) renderWarnings(...warnArgs); }
 }
 setInterval(() => { if (view === 'dashboard' && !document.hidden) refreshPositions(); }, POS_EVERY);
 document.addEventListener('visibilitychange', () => { if (!document.hidden && view === 'dashboard') refreshPositions(); });
 $('#posRefresh').onclick = () => refreshPositions(true);
-setInterval(() => { if (positions && view === 'dashboard') $('#posAt').textContent = `updated ${agoShort(positions.at)}`; }, 5000);
+setInterval(() => { if (positions && view === 'dashboard') $('#posAt').textContent = agoShort(positions.at); $('#posAt').title = 'Updated from Bybit'; }, 5000);
 // Unrealized P&L on open positions is hidden until you choose to see it; remembered in this browser.
 let posPnlHidden = store.get('hidePosPnl', true);
 function paintPosEye() {
@@ -1171,7 +1205,7 @@ function smtFor(p) {
 function renderPositions() {
   const list = $('#posList');
   if (!positions) { list.replaceChildren(el('p', 'muted small', 'Checking Bybit for open positions…')); return; }
-  $('#posAt').textContent = `updated ${agoShort(positions.at)}`;
+  $('#posAt').textContent = agoShort(positions.at); $('#posAt').title = 'Updated from Bybit';
   if (!positions.available) {
     $('#posCount').textContent = ''; $('#posTotal').textContent = '';
     list.replaceChildren(el('p', 'muted small', positions.error ? `Couldn’t read open positions: ${positions.error}` : 'Open positions need a connected read-only key.'));
@@ -1179,7 +1213,10 @@ function renderPositions() {
   }
   const ps = [...positions.positions].sort((a, b) => b.value - a.value);
   // count against the playbook's cap, and what's at risk if every stop is hit
-  $('#posCount').textContent = ps.length ? `· ${ps.length} of ${MAX_POSITIONS}` : '';
+  // which one is showing ("1 of 2"); the cap in the tooltip, and amber when it's reached
+  const shown = ps.length ? ((posIdx % ps.length) + ps.length) % ps.length : 0;
+  $('#posCount').textContent = ps.length > 1 ? `· ${shown + 1} of ${ps.length}` : ps.length ? '· 1 open' : '';
+  $('#posCount').title = `${ps.length} of ${MAX_POSITIONS} positions open (the plan’s cap)`;
   $('#posCount').classList.toggle('full', ps.length >= MAX_POSITIONS);
   const total = ps.reduce((n, p) => n + p.upnl, 0);
   const atRisk = ps.reduce((n, p) => n + (p.slLoss < 0 ? -p.slLoss : 0), 0), eqv = equityNow();
@@ -1193,11 +1230,19 @@ function renderPositions() {
     groups.push(g);
   }
   $('#posTotal').replaceChildren(...groups);
-  showPosCard(ps.length > 0);
-  if (!ps.length) { list.replaceChildren(el('p', 'muted small pos-none', 'No open positions.')); return; }
-
-  list.replaceChildren(...ps.map(p => {
-    const row = el('div', 'pos-row');
+  // the card stays: with nothing open it shows the last trade
+  showPosCard(true);
+  if (!ps.length) {
+    $('#posCycle').replaceChildren();
+    const last = [...all].filter(t => !t.open && Number.isFinite(t.exit)).sort((a, b) => b.time - a.time)[0];
+    list.replaceChildren(last ? lastTradeBody(last, { money, price, hidden: posPnlHidden, fmtDuration, when: t => dateTime(t) }) : el('p', 'muted small pos-none', 'No open positions.'));
+    return;
+  }
+  // one position at a time, cycled with ‹ › (remembered while the page is open)
+  posIdx = ((posIdx % ps.length) + ps.length) % ps.length;
+  const leaving = posSlide ? list.querySelector('.pos-row') : null, dir = posSlide;
+  list.replaceChildren(...[ps[posIdx]].map(p => {
+    const row = el('div', 'pos-row' + (posSlide ? ' slide-' + posSlide : '')); posSlide = null;
     const name = el('div', 'pos-name');
     name.append(el('b', '', p.symbol), el('span', 'pos-side ' + (p.dir === 'Long' ? 'long' : 'short'), `${p.dir} ${p.leverage}×`));
     name.append(el('small', 'muted', `${p.size.toLocaleString(undefined, { maximumFractionDigits: 6 })} · ${compact(p.value)} · ${p.openedAt ? 'open ' + fmtDuration(Date.now() - p.openedAt) : 'open over 7 days'}`));
@@ -1206,8 +1251,13 @@ function renderPositions() {
     if (posPnlHidden) pnl.append(el('b', 'masked', '$' + MASK), el('small', 'muted', `${MASK} on margin`));
     else pnl.append(el('b', sign(p.upnl), money(p.upnl)), el('small', 'muted', `${signedPct(p.upnlPct)} on margin`));
 
-    const px = el('div', 'pos-cell');
-    px.append(el('span', 'kicker', 'Entry → mark'), el('span', 'num', `${price(p.entry)} → ${price(p.mark)}`));
+    // the live price: a pulsing dot, a sheen across the box, and a green / red flash when the mark ticks
+    const px = el('div', 'pos-cell live-px');
+    const k = el('span', 'kicker'); k.append(el('i', 'live-px-dot'), 'Entry → mark');
+    px.append(k, el('span', 'num', `${price(p.entry)} → ${price(p.mark)}`));
+    const prevMark = lastMarks.get(p.id);
+    if (prevMark !== undefined && prevMark !== p.mark) px.classList.add(p.mark > prevMark ? 'tick-up' : 'tick-down');
+    lastMarks.set(p.id, p.mark);
 
     // distance to liquidation: amber under 10%, red under 4%
     const liq = el('div', 'pos-cell');
@@ -1216,15 +1266,26 @@ function renderPositions() {
     liq.append(el('span', 'kicker', 'Liquidation'), el('span', 'num ' + lvl, p.liq ? `${price(p.liq)} · ${pct(dist, 1)} away` : 'none'));
     if (dist !== null) { const bar = el('i', 'liq-bar ' + lvl); bar.style.setProperty('--w', Math.min(1, dist / 0.25) * 100 + '%'); liq.append(bar); }
 
-    const btn = el('button', 'btn small-btn', 'Replay');
-    btn.type = 'button';
-    btn.onclick = () => openReplay(positionTrade(p), [positionTrade(p)], replayCtx());
-    row.append(name, pnl, px, liq, btn);
+    row.append(name, pnl, px, liq);
+    // its progress in R: a block per R up to the target
+    const bat = batteryBody(p); bat.classList.add('pos-bat'); row.append(bat);
+    if (ps.length > 1) {
+      const nav = $('#posCycle');
+      const prev = el('button', 'pv-arrow', '‹'), next = el('button', 'pv-arrow', '›'); prev.type = next.type = 'button';
+      prev.onclick = () => cyclePos(-1); next.onclick = () => cyclePos(1);
+      const dots = el('span', 'pv-dots'); ps.forEach((q, j) => { const d = el('button', j === posIdx ? 'on' : ''); d.type = 'button'; d.title = q.symbol; d.onclick = () => cyclePos(j - posIdx); dots.append(d); });
+      nav.replaceChildren(prev, dots, next);
+      const on = dots.querySelector('.on'); if (on) on.style.setProperty('--p', Math.min(1, 1 - posLeft / POS_EVERY_MS));
+    } else $('#posCycle').replaceChildren();
     // the playbook's notes for this position: NY bias, where it is in the plan, weekend
     const notes = positionNotes(p, { sessions: bias?.sessions || [], price, equity: equityNow(), smt: smtFor(p) });
-    if (notes.length) { const n = el('div', 'pos-notes'); n.append(...notes.map(x => el('span', 'pos-note ' + x.cls, x.text))); row.append(n); }
+    if (notes.length) {
+      // each note's edge colour by what it's about (a warning stays amber)
+      const n = el('div', 'pos-notes'); n.append(...notes.map(x => el('span', `pos-note ${x.cls} ${noteTopic(x.text)}`, x.text))); row.append(n);
+    }
     return row;
   }));
+  if (leaving) { leaving.classList.remove('slide-next', 'slide-prev'); leaving.classList.add('leaving', 'leaving-' + dir); list.append(leaving); leaving.addEventListener('animationend', () => leaving.remove(), { once: true }); }
 }
 
 // ---- best hour ----
@@ -2065,10 +2126,10 @@ function renderToday() {
   card.classList.toggle('done', ck.complete);
   card.classList.toggle('pending', !ck.complete);
   $('.today-note').classList.toggle('todo', !ck.wrote);
-  // once you're checked in, the card can fold to a single line (remembered for today only)
-  const collapsed = ck.complete && store.get('todayCollapsed', null) === key;
+  // the card folds to a single line from its title row (remembered for today only)
+  const collapsed = store.get('todayCollapsed', null) === key;
   card.classList.toggle('collapsed', collapsed);
-  $('#tdCollapse').hidden = !ck.complete;
+  $('#tdCollapse').hidden = false;
   $('#tdCollapse').setAttribute('aria-expanded', String(!collapsed));
   $('#tdCollapse').title = collapsed ? 'Expand' : 'Collapse';
   $('#tdEdit').hidden = collapsed;
@@ -2120,8 +2181,8 @@ $('#tdCollapse').onclick = e => {
   store.set('todayCollapsed', folded ? null : key);
   renderToday();
 };
-// clicking anywhere on the folded line opens it again
-$('.today-head').addEventListener('click', e => { if ($('.today-card').classList.contains('collapsed') && !e.target.closest('button')) $('#tdCollapse').click(); });
+// clicking the title row folds or opens the card (its buttons keep their own jobs)
+$('.today-head').addEventListener('click', e => { if (!e.target.closest('button, a, input, textarea')) $('#tdCollapse').click(); });
 $('#tdOpen').onclick = () => { flushToday(); openJournal(dayKey(new Date())); };
 
 // edit the list
@@ -2367,7 +2428,7 @@ function syncHash() {
   if (location.hash !== want) history.replaceState(null, '', want);
 }
 function readHash() {
-  const m = location.hash.match(/^#(dashboard|analytics|journal|review|reports|playbook|wizard|trades|scanner|signals|strategy|forward)(?:\/([\w-]+))?$/);
+  const m = location.hash.match(/^#(dashboard|analytics|journal|review|reports|playbook|wizard|trades|scanner|signals|strategy)(?:\/([\w-]+))?$/);
   if (!m) return false;
   if (m[1] === 'journal' && /^\d{4}-\d{2}-\d{2}$/.test(m[2] || '')) { jr.day = m[2]; const d = keyToDate(m[2]); jr.month = { y: d.getFullYear(), m: d.getMonth() }; }
   if (m[1] === 'playbook' && m[2]) pb.id = m[2];
