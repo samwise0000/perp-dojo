@@ -417,6 +417,30 @@ export function renderSignalsView(ctx) {
     document.addEventListener('pointerdown', e => { if (!panel.hidden && !e.target.closest('.sig-more')) setOpen(false); });
     panel.addEventListener('keydown', e => { if (e.key === 'Escape') { setOpen(false); btn.focus(); } });
     $('#sigFiltReset').onclick = () => { for (const f of FILTERS) f.clear(); tab.shown = 100; paint(); };
+    // The filters as rows of pills, always in view: each dropdown's options become pills (click one to
+    // use it, again to clear it), the two checkboxes become toggles. The dropdowns stay underneath, hidden,
+    // so everything else (the chips' clear, saved state) works as before. The pair list stays a dropdown.
+    const bar = panel; bar.hidden = false; bar.className = 'sig-pillbar'; bar.removeAttribute('role');
+    btn.closest('.sig-more').replaceWith(...[]); $('#sigFiltChips').hidden = true;
+    $('#sigView').before(bar);
+    for (const lab of [...bar.querySelectorAll(':scope > label')]) {
+      const sel = lab.querySelector('select'), name = lab.querySelector('span')?.textContent || '';
+      if (!sel) continue;
+      const g = el('div', 'sig-pg'); g.title = lab.title || ''; g.append(el('span', 'sig-pg-n', name));
+      if (sel.id === 'sigPair') { sel.classList.add('sig-pg-sel'); g.append(sel); lab.replaceWith(g); continue; }
+      for (const o of [...sel.options].filter(o => o.value !== 'all')) {
+        const pb = el('button', 'sig-fpill', o.textContent); pb.type = 'button'; pb.dataset.sel = sel.id; pb.dataset.v = o.value;
+        pb.onclick = () => { sel.value = sel.value === o.value && sel.querySelector('option[value="all"]') ? 'all' : o.value; sel.dispatchEvent(new Event('change')); };
+        g.append(pb);
+      }
+      sel.hidden = true; g.append(sel); lab.replaceWith(g);
+    }
+    const tg = el('div', 'sig-pg'); tg.append(el('span', 'sig-pg-n', 'Hide'));
+    for (const [lab, txt] of [[wl, '⛔ Wrong time'], [bl, 'B/E trades']]) {
+      const box = lab.querySelector('input'), pb = el('button', 'sig-fpill', txt); pb.type = 'button'; pb.title = lab.title; pb.dataset.box = '1';
+      pb.onclick = () => box.click(); pb._box = box; tg.append(pb); lab.hidden = true; tg.append(lab);
+    }
+    $('#sigFiltReset').before(tg);
     const pf = $('#sigPair');
     pf.replaceChildren(el('option', '', 'All pairs'), ...PAIRS.map(p => { const o = el('option', '', coin(p)); o.value = p; return o; }));
     pf.firstChild.value = 'all';
@@ -530,10 +554,17 @@ const shapeOk = s => {
   const f = tab.shape, sh = s.shape; if (f === 'all') return true; if (!sh) return false;
   return f === 'at' ? !sh.away : f === 'away' ? sh.away : f === 'plain' ? sh.away && !sh.engulf : f === 'engulf' ? Boolean(sh.engulf) : sh.engulf === f;
 };
+// which filter pills are on: a pill matches its dropdown's value, a toggle its checkbox
+function syncPills() {
+  for (const pb of document.querySelectorAll('.sig-fpill')) {
+    const on = pb._box ? pb._box.checked : $('#' + pb.dataset.sel)?.value === pb.dataset.v;
+    pb.classList.toggle('on', on); pb.setAttribute('aria-pressed', String(on));
+  }
+}
 function paintChips() {
   const set = FILTERS.filter(f => f.on());
-  $('#sigFiltN').hidden = !set.length; $('#sigFiltN').textContent = set.length;
-  $('#sigFiltChips').replaceChildren(...set.map(f => {
+  const n = $('#sigFiltN'); if (n) { n.hidden = !set.length; n.textContent = set.length; }
+  $('#sigFiltChips')?.replaceChildren(...set.map(f => {
     const c = el('button', 'sig-filt-chip'); c.type = 'button'; c.title = 'Remove this filter';
     c.append(f.text(), el('i', '', '×'));
     c.onclick = () => { f.clear(); tab.shown = 100; paint(); };
@@ -543,6 +574,7 @@ function paintChips() {
 
 function paint() {
   paintChips();
+  syncPills();
   const all = tab.data.signals;
   const base = all.filter(s => (tab.pair === 'all' || s.symbol === tab.pair) && (tab.side === 'all' || s.side === tab.side) && (tab.trend === 'all' || s.trend === tab.trend) && (tab.golden === 'all' || (s.golden != null) === (tab.golden === 'in')) && rsiOk(s) && shapeOk(s) && (tab.setup === 'all' || (setupOf(s) ?? 'none') === tab.setup) && (tab.full === 'all' || Boolean(s.full) === (tab.full === 'full')) && (tab.grr === 'all' || Boolean(s.goldenRR) === (tab.grr === 'in')) && (tab.ema === 'all' || (s.grade?.skip === 'ema') === (tab.ema === 'only')) && !(tab.noWrong && wrongTime(s)) && !(tab.noBE && outcomeOf(s.trade)?.result === 'be'));
   const list = sortSignals(base.filter(gradeOk));
