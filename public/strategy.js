@@ -10,7 +10,7 @@ import { zonedToUtc, NY_TZ } from './bias.js';
 const AS_OF = '4 Nov 2026';
 const pct = v => `${+v.toFixed(2)}%`;
 const hh = h => `${String(h).padStart(2, '0')}:00`;
-const badge = g => `<span class="sig-grade g-${g.toLowerCase().replace(/\+/g, 'plus')}">${g === 'A++' ? '★ A++' : g === 'S+' ? '👑 S+' : g === 'C+' ? '🕯️ C+' : g}</span>`;
+const badge = g => `<span class="sig-grade g-${g.toLowerCase().replace(/\+/g, 'plus')}">${g === 'A++' ? '★ A++' : g === 'S++' ? '💎 S++' : g === 'S+' ? '👑 S+' : g === 'S' ? '🐋 S' : g === 'C+' ? '🕯️ C+' : g}</span>`;
 const pairs = DEFAULT_PAIRS.split(' ').length;
 
 // today's NY session (8 AM – 5 PM New York) in the viewer's local time
@@ -141,9 +141,15 @@ function weekGrid() {
 
 // ---------- grades ----------
 const GRADES = [
+  { g: 'S++', title: 'S+ or whale A, golden R:R, golden zone', checks: [1, null, null, null],
+    means: 'An S+, or an A / A+ with 🐋 whale absorption, that’s also a ⭐ golden R:R (a 10–20R target within 10 ATR) and lands in the ✨ golden zone: BTC has pulled back from the last NY session’s move, the way the setup trades (12:00 / 16:00 closes). The golden zone stands in for S’s BTC cool-off, so a whale A doesn’t need it here.',
+    trade: () => 'Full plan, sized as the A grade under it. Over the past year (63 pairs, with adds, after fees) it made +10.59R a trade on 15 (+4.16R without the best 3, 53% profitable), 5 of them 26R or more. The rarest and best-looking tier, but only 15 trades, found by slicing after the fact: forward-test it at the A grade’s size.' },
   { g: 'S+', title: 'Full swing failure, golden R:R', checks: [1, null, null, null],
     means: 'An A++, A+ or A that’s both a 💥 full swing failure and a ⭐ golden R:R. Full: the wick ran past the swing candle’s own wick, not just its body, so it took the stops beyond the visible extreme. Golden R:R: the target is 10–20R from the close but within 10 times the coin’s average 4h range, so it pays well and is still reachable.',
     trade: () => 'Full plan, sized as the A grade under it, at its closes. Over 5 years (35 pairs, at plan times, shorts above BTC’s 4h EMA100 left out) it made +3.34R a trade on 53, +1.39R without the best 3, positive in 3 of 5 years. About 10 a year. The alerts mark it 👑, with the 💥 and ⭐ lines.' },
+  { g: 'S', title: 'A or A+ with whale absorption, BTC cooled', checks: [1, null, null, null],
+    means: 'An A or A+ where retail was panicking into the sweep and it got absorbed: funding against your side (the crowd leaning the other way), and the sweep candle’s market orders against you in the top 20% of the coin’s last 30 days, yet it still closed back inside (🐋 Whale Absorption). And BTC’s 1h RSI has 🧊 cooled off (35–45, read the trade’s way): BTC pulled back without breaking.',
+    trade: () => 'Full plan, sized as the A grade under it, at its closes. Over the past year (Signals view, wrong time hidden, with adds) S with BTC cooled made +1.81R a trade on 31 with 5 winners (16%); with BTC oversold / overbought against it, 1 winner in 23. Both are negative without the best 3 and rest on a handful of runners, so it’s being forward-tested at the A grade’s size.' },
   { g: 'A+', title: 'With the bias, stretched', checks: [1, 1, 0, 1],
     means: `With yesterday’s NY bias, today’s session isn’t running, BTC didn’t sweep, and the pair’s 4h RSI(14) is stretched the trade’s way: under ${BPLUS_RSI} for a long, over ${100 - BPLUS_RSI} for a short. The move into the level has run far enough that the failure tends to stick. The best zone is 30–40 (60–70 for shorts).`,
     trade: () => `Full plan at ${pct(RISK_PCT['A+'])} on the main closes Mon–Thu (half at Thursday 16:00). The best A grade over 5 years (+0.55R a trade, 4 of 5 years up), so it ranks first of the A grades. Not at the late closes: there it lost (⛔).` },
@@ -164,7 +170,7 @@ const GRADES = [
     trade: () => 'Tracking only, no size. Tracked with fixed targets at 2R and 3R (first entry, no adds): in the backtest those were steadier than the plan, positive in both halves and without the best trades. The alerts flag it 🌊 and show both prices.' },
   { g: 'C+', title: 'An A grade that engulfed', checks: [1, null, null, null],
     means: 'An A++, A+ or A whose signal candle also engulfed the candle before it: it closed past that candle’s body or its wick. The rejection is strong, but the candle has already run far from the level, so entering at its close leaves little room.',
-    trade: () => 'Tracking only, no size. If you take one, use a limit 70% of the candle back toward the wick (the 🕯️ line), stop behind the wick, cancel after 24h or if the target trades first. It was S until the current plan’s numbers: +2.47R a trade on 29 filled, but −0.73R without the best 3.' },
+    trade: () => 'Tracking only, no size. If you take one, use the 🪜 ladder, 5 limits 70–90% of the candle back toward the wick (the 🕯️ line), stop behind the wick, cancel after 24h or if the target trades first. It was S until the current plan’s numbers: +2.47R a trade on 29 filled, but −0.73R without the best 3.' },
   { g: 'C', title: 'Against the bias', checks: [0, null, null, null],
     means: 'Against yesterday’s NY bias, or no bias to go by. Before fees these break even; after fees they lose. Every filter tried on top failed to rescue them.',
     trade: () => 'Mostly avoid. They stay logged in Signals and the alerts, so you can spot something the grade misses.' },
@@ -190,7 +196,7 @@ const SETUPS = [
   { grades: ['A+', 'A'], name: 'A+ / A', when: 'Other late closes (20:00, 04:00, 00:00 without a BTC sweep)', wrongTime: true, c: [1, null, null, null, null], risk: () => 'skip', take: 'no', n: 118, days: 48, avg: -0.33, total: -39, wo: -67, prof: 37, how: 'Outside the main closes an A needs BTC sweeping with it.' },
   { grades: ['A++'], name: '★ A++ · 🌃 Late A++', when: '20:00, Mon–Thu, NY open, RSI stretched', wrongTime: true, c: [1, 0, 0, 1, 0], risk: () => 'skip', take: 'no', n: 48, days: 35, avg: -0.62, total: -30, wo: -34, prof: 33, how: 'Lost in both halves: right at the NY open the move isn’t done.' },
   { grades: ['B'], name: 'B', when: 'Any close', c: [1, 0, 0, 0, null], risk: () => 'monitor', take: 'no', n: 264, days: 130, avg: -0.24, total: -64, wo: -90, prof: 32, how: 'The bias may be going stale and nothing backs it up.' },
-  { grades: ['C+'], name: '🕯️ C+', when: 'An A grade whose candle engulfed: a limit 70% back', c: [1, null, null, null, null], risk: () => 'tracking', take: 'track', n: 29, days: 21, avg: 2.47, total: 72, wo: -19, prof: 31, how: '5 years on 35 long-lived pairs, at plan times, EMA100 shorts left out. A few big wins carry it.' },
+  { grades: ['C+'], name: '🕯️ C+', when: 'An A grade whose candle engulfed: a 🪜 ladder 70–90% back', c: [1, null, null, null, null], risk: () => 'tracking', take: 'track', n: 29, days: 21, avg: 2.47, total: 72, wo: -19, prof: 31, how: '5 years on 35 long-lived pairs, at plan times, EMA100 shorts left out. A few big wins carry it.' },
   { grades: ['C'], name: 'C', when: 'Any close', c: [0, null, null, null, 0], risk: () => 'avoid', take: 'no', n: 2299, days: 333, avg: -0.12, total: -272, wo: -519, prof: 26, how: 'Against yesterday’s NY bias: break-even before fees, a loss after.' },
   { grades: ['C'], name: 'C', when: 'Main closes, Mon–Thu', c: [0, null, null, null, 0], risk: () => 'avoid', take: 'no', n: 755, days: 157, avg: -0.22, total: -164, wo: -282, prof: 27, how: 'Even at the best closes.' },
 ];
@@ -263,7 +269,7 @@ export function renderStrategy(root) {
   <div class="card c12 st-hero">
     <div class="kicker">The strategy</div>
     <h2>4h swing failures, graded by the New York session</h2>
-    <p class="st-lede">Price runs a major 4h high or low, then the candle closes back inside: the breakout failed, and the stops behind the level were the fuel. You enter at that close, stop at the wick, and target where the move started. Each setup is graded by whether yesterday’s New York session, BTC and momentum agree with it. Only the good grades, at the good hours, get real risk, and the winners are left alone to run.</p>
+    <p class="st-lede">Price runs a major 4h high or low, then the candle closes back inside: the breakout failed, and the stops behind the level were the fuel. You enter at that close, stop at the wick, and target where the move started, then trail the stop once it’s reached. Each setup is graded by whether yesterday’s New York session, BTC and momentum agree with it. Only the good grades, at the good hours, get real risk, and the winners are left alone to run.</p>
     <div class="st-kpis">
       <div><b>${pairs}</b><span>pairs watched</span></div>
       <div><b>+2.32R</b><span>avg trade the plan takes</span></div>
@@ -301,7 +307,7 @@ export function renderStrategy(root) {
     <div class="st-three">
       <div class="st-pill"><b>Entry</b><span>At the signal candle’s close. No waiting for a retest: the best runners never come back.</span></div>
       <div class="st-pill neg"><b>Stop</b><span>Just beyond the signal candle’s wick. That distance is 1R, your risk.</span></div>
-      <div class="st-pill pos"><b>Target</b><span>The <b>opposing level</b>: the most extreme opposite swing body between the swept swing and the signal, where the move into the sweep started.</span></div>
+      <div class="st-pill pos"><b>Target, then trail</b><span>The <b>opposing level</b>: the most extreme opposite swing body between the swept swing and the signal, where the move into the sweep started. When it’s touched, don’t close: trail the stop behind each closed 4h candle.</span></div>
     </div>
     <p class="muted small">If one candle touches both the stop and the target, the backtest counts it as a loss.</p>
   </section>
@@ -379,7 +385,7 @@ export function renderStrategy(root) {
       <li><b>Entry</b> at the close, 1 unit, stop at the wick.</li>
       <li><b>At +1R</b> add the same size. Move <b>all</b> stops to your entry.</li>
       <li><b>At +2R</b> add half size. Move all stops to the <b>whole position’s break-even</b> (its average entry, plus ~0.15% for fees).</li>
-      <li><b>All out at the target.</b> Adds the target comes before are skipped.</li>
+      <li><b>At the target, trail.</b> Don’t close: move the stop to each closed 4h candle’s low (a short: its high), only ever tighter, until a candle trades through it. Adds the target comes before are skipped. In the backtest the trail made <b>+2.18R</b> a plan trade against +1.77R for closing at the target, and held up without its best 3 trades (+1.55R vs +1.29R). <span class="muted">Optional: take half off at the target and trail the rest: +1.97R, a little less on average, but it banks profit and halves what a reversal after the touch takes back.</span></li>
     </ol>
     <p class="muted small">Each add risks 1R back to the entry, so a trade that reaches +2R can no longer lose.</p>
   </section>
@@ -399,7 +405,7 @@ export function renderStrategy(root) {
         <p class="muted small">Past year, every setup the plan takes, with its limits (2 new a close, 5 open), the full plan and fees: 381 trades, 884R. The biggest single trade made 155R.</p>
       </div>
       <div><ul class="st-list">
-        <li><b>Set the stop and target, then leave it.</b> The only changes are the plan’s adds and stop moves.</li>
+        <li><b>Set the stop and target, then leave it.</b> The only changes are the plan’s adds, stop moves and, past the target, the trail at each 4h close.</li>
         <li><b>Don’t take profit early.</b> The median trade lasts 8 hours, but 20R+ runners take about <b>2.7 days</b>.</li>
         <li><b>Hold through the weekend.</b> Trades already open going into it were the biggest winners. Don’t open new ones on Saturday or Sunday, and keep Friday to the best setup at a quarter size.</li>
         <li><b>Expect losing streaks.</b> Losing days are normal and a 5R+ runner only comes about 1 trade in 12, so skipping trades after a few losses is how you miss the one that pays.</li>

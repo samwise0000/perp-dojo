@@ -33,7 +33,7 @@ const fetcher = parts => async (symbol, interval) => {
   const whole = candleAt(parts, START, CLOSE);
   return [...history, whole];                     // Bybit includes the forming candle
 };
-const run = (phase, parts) => runAlerts({ phase, now: phase === 'pre' ? CLOSE - 4 * 60_000 : CLOSE + 30_000, pairs: ['AAVEUSDT'], opts: OPTS, fetchCandles: fetcher(parts) });
+const run = (phase, parts) => runAlerts({ phase, now: phase === 'pre' ? CLOSE - 4 * 60_000 : CLOSE + 30_000, pairs: ['AAVEUSDT'], opts: OPTS, fetchCandles: fetcher(parts), fetchFlow: async () => ({ funding: [], taker: [] }) });
 
 test('runs are about the right candle', () => {
   assert.deepEqual(windowFor('pre', CLOSE - 4 * 60_000), { start: START, close: CLOSE, cut: CLOSE - 5 * 60_000 });

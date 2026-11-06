@@ -713,11 +713,13 @@
                   <label><span>BTC trend</span><select id="sigTrendF"><option value="all">Any BTC trend</option><option value="aligned">Aligned with BTC</option><option value="counter">Countertrend</option><option value="neutral">BTC neutral</option></select></label>
                   <label title="✨ BTC in golden zone / NY pullback, tagged at the 12:00 and 16:00 closes"><span>Golden zone</span><select id="sigGoldF"><option value="all">Any zone</option><option value="in">✨ Golden zone</option><option value="out">Not golden zone</option></select></label>
                   <label title="BTC's 1h RSI at the close, read the trade's way. Tagged on setups with the NY bias (not C grades)"><span>BTC 1h RSI</span><select id="sigRsiF"><option value="all">Any RSI</option><option value="cool">🧊 Cooled off (35–45)</option><option value="chase">⚠️ Extended (60+)</option><option value="deep">⚠️ BTC oversold / overbought</option><option value="warn">⚠️ Either warning</option><option value="none">No RSI tag</option></select></label>
+                  <label title="🐋 Whale Absorption: funding against your side and the candle's selling (or buying) absorbed. ⚠️ Crowded: your side pays heavy funding"><span>Whale</span><select id="sigWhaleF"><option value="all">Any flow</option><option value="absorbed">🐋 Whale Absorption</option><option value="crowded">⚠️ Crowded</option><option value="none">Neither</option></select></label>
                   <label title="💥 Full swing failure: the wick also went past the swing candle's own wick, not just its body"><span>Sweep</span><select id="sigFullF"><option value="all">Any sweep</option><option value="full">💥 Full swing failure</option><option value="body">Body only</option></select></label>
                   <label title="⭐ Golden R:R: an A grade with a 10–20R target from the close, within 10 times the coin's average 4h range. Tracking only"><span>R:R</span><select id="sigGrrF"><option value="all">Any R:R</option><option value="in">⭐ Golden R:R</option><option value="out">Not golden R:R</option></select></label>
                   <label title="Shorts while BTC is above its 4h EMA100: shown, but the plan gives them no size (they lost in every one of 5 years)"><span>BTC EMA100</span><select id="sigEmaF"><option value="all">All signals</option><option value="hide">Hide ⚠️ shorts above it</option><option value="only">Only ⚠️ shorts above it</option></select></label>
                   <label title="The named setups tracked inside a grade, where the plan takes them"><span>Setup</span><select id="sigSetupF"><option value="all">Any setup</option><option value="🌃 Late A++">🌃 Late A++</option><option value="🌙 Midnight sweep">🌙 Midnight sweep</option><option value="🌊 NY fade">🌊 NY fade</option><option value="none">None of these</option></select></label>
                   <label title="The signal candle: closed at the level (against the trade's colour), or already away from it, and whether it engulfed the previous candle"><span>Candle</span><select id="sigShapeF"><option value="all">Any candle</option><option value="at">At the level</option><option value="away">🕯️ Closed away (all)</option><option value="plain">🕯️ Away, no engulf</option><option value="engulf">🕯️ Any engulf</option><option value="body">🕯️ Body engulf</option><option value="wick">🕯️ Wick engulf</option></select></label>
+                  <label title="Still running (or a limit still waiting to fill), or finished"><span>Status</span><select id="sigStatusF"><option value="all">Any status</option><option value="open">Open / live</option><option value="closed">Closed</option></select></label>
                   <label title="Results with the scaling plan (adds at +1R and +2R, stops to entry, then break-even) or the first entry alone"><span>Results</span><select id="sigMode"><option value="adds">With adds</option><option value="first">First entry only</option></select></label>
                   <div id="sigWrongSlot"></div>
                   <button id="sigFiltReset" class="sig-filt-reset" type="button">Reset filters</button>
@@ -764,8 +766,13 @@
     </div>
     <button id="rpClose" class="icon-btn" type="button" aria-label="Close">✕</button>
   </div>
+  <section id="rpHead" class="rp-head" aria-label="This setup’s record" hidden></section>
+  <div class="rp-body">
+  <div class="rp-side">
   <dl id="rpStats" class="replay-stats"></dl>
   <section id="rpGuide" class="replay-guide" aria-label="Trade guide" hidden></section>
+  </div>
+  <div class="rp-main">
   <div class="replay-bar">
     <div class="seg small" role="group" aria-label="Candle size" id="rpIntervals"></div>
     <div class="replay-nav">
@@ -776,6 +783,8 @@
   </div>
   <div id="rpChart" class="replay-chart"></div>
   <p id="rpNote" class="muted small"></p>
+  </div>
+  </div>
   <section id="rpNotes" class="trade-notes" aria-label="Notes and tags for this trade"></section>
 </dialog>
 

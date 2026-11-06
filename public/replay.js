@@ -158,7 +158,9 @@ async function show() {
   // a signal's trade guide replaces the stat cards
   const guide = $('#rpGuide');
   dl.hidden = Boolean(t.view?.guide); guide.hidden = !t.view?.guide;
-  if (t.view?.guide) renderGuide(guide, t.view.guide);
+  $('#replayDlg').classList.toggle('has-guide', Boolean(t.view?.guide));   // guide on the left, chart on the right
+  const head = $('#rpHead'); head.hidden = !t.view?.guide;
+  if (t.view?.guide) renderGuide(guide, head, t.view.guide);
 
   const box = $('#rpChart'), note = $('#rpNote');
   note.textContent = 'Loading candles from Bybit…';
@@ -330,13 +332,56 @@ export function decimals(cs) {
   return p >= 1000 ? 1 : p >= 10 ? 2 : p >= 1 ? 4 : Math.min(8, 2 + Math.ceil(-Math.log10(p)) + 2);
 }
 
-// Steps as a numbered list; **text** is bold. Then what happened, and a line of context.
-function renderGuide(root, { steps, outcome, context }) {
+// A signal's trade guide: its record (grade + tags, past year), then Entry → Trade management → Exit
+function renderGuide(root, headRoot, { history, sections, outcome, context }) {
+  const mk = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
   const rich = text => text.split('**').map((part, i) => { if (!(i % 2)) return document.createTextNode(part); const b = document.createElement('b'); b.textContent = part; return b; });
-  const ol = document.createElement('ol');
-  for (const st of steps) { const li = document.createElement('li'); li.append(...rich(st)); ol.append(li); }
-  const out = [ol];
-  if (outcome) { const p = document.createElement('p'); p.className = 'rg-outcome ' + outcome.cls; p.append(...rich(outcome.text)); out.push(p); }
-  if (context) { const p = document.createElement('p'); p.className = 'rg-context muted small'; p.textContent = context; out.push(p); }
+  const out = [];
+  if (history) {
+    const h = mk('div', 'rg-hist');
+    const head = mk('div', 'rg-hist-head');
+    head.append(mk('span', 'kicker', history.title));
+    const chips = mk('div', 'rg-chips');
+    for (const c of history.chips) { const e = mk('span', c.cls, c.text); if (c.title) e.title = c.title; chips.append(e); }
+    head.append(chips);
+    if (history.proj) { const e = mk('span', 'rg-proj ' + history.proj.cls, history.proj.text); e.title = history.proj.title || ''; head.append(e); }
+    h.append(head);
+    const rows = mk('div', 'rg-hist-rows');
+    for (const r of history.rows) {
+      const row = mk('div', 'rg-hrow' + (r.thin ? ' thin' : ''));
+      const lab = mk('span', 'rg-hlab', r.label); if (r.title) lab.title = r.title;
+      const bar = mk('span', 'rg-hbar');
+      if (r.n) for (const [k, v] of [['w', r.wins], ['b', r.bes], ['l', r.losses]]) if (v) { const seg = mk('i', 'rg-' + k); seg.style.flexGrow = v; bar.append(seg); }
+      bar.title = r.n ? `${r.wins} won · ${r.bes} break-even · ${r.losses} lost` : 'No finished trades';
+      const st = (k, v, cls = '', tip = '') => { const d = mk('span', 'rg-hst'); d.append(mk('small', '', k), mk('b', cls, v)); if (tip) d.title = tip; return d; };
+      row.append(lab, bar,
+        st('Trades', r.n ? r.n.toLocaleString() : '—'),
+        st('Won', r.n ? `${Math.round(100 * r.wins / r.n)}%` : '—'),
+        st('R a trade', r.avg == null ? '—' : r.avgText, r.avg == null ? '' : r.avg >= 0 ? 'pos' : 'neg', 'Average after Bybit fees'),
+        st('w/o best 3', r.wo3 == null ? '—' : r.wo3Text, r.wo3 == null ? '' : r.wo3 >= 0 ? 'pos' : 'neg', 'R a trade with its 3 best trades left out: does it hold up without its outliers?'));
+      rows.append(row);
+    }
+    h.append(rows);
+    if (history.note) { head.firstChild.title = history.note; if (!history.rows.length) h.append(mk('p', 'rg-hnote muted small', history.note)); }
+    headRoot.replaceChildren(h);
+  } else { headRoot.replaceChildren(); headRoot.hidden = true; }
+  const flow = mk('div', 'rg-flow');
+  sections.forEach((sec, i) => {
+    const c = mk('section', `rg-sec rg-${sec.key} st-${sec.state || 'idle'}`);
+    const top = mk('div', 'rg-sec-head');
+    top.append(mk('span', 'rg-n', String(i + 1)), mk('span', 'rg-sec-t', sec.title));
+    if (sec.badge) top.append(mk('span', 'rg-badge', sec.badge));
+    const fig = mk('div', 'rg-fig'); fig.append(mk('span', '', sec.figure));
+    if (sec.sub) fig.append(mk('span', 'rg-sub muted small', sec.sub));
+    c.append(top, fig);
+    const ol = mk('ol');
+    for (const st of sec.steps) { const li = mk('li'); li.append(...rich(st)); ol.append(li); }
+    c.append(ol);
+    // what happened, at the end of the exit
+    if (sec.key === 'exit' && outcome) { const p = mk('p', 'rg-outcome ' + outcome.cls); p.append(...rich(outcome.text)); c.append(p); }
+    flow.append(c);
+  });
+  out.push(flow);
+  if (context) out.push(mk('p', 'rg-context muted small', context));
   root.replaceChildren(...out);
 }

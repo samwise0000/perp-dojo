@@ -196,9 +196,13 @@ test('trade: entry at the close, stop at the wick, target at the swing the move 
   assert.equal(t.result, 'open');
 });
 
-test('trade: target hit is a win of rr, stop hit is −1R, both in one candle counts as the stop', () => {
-  assert.deepEqual([tradeOf([...tradeBase, [108, 109, 100, 101], [101, 102, 91, 93]]).result], ['win']);
-  assert.ok(Math.abs(tradeOf([...tradeBase, [108, 109, 100, 101], [101, 102, 91, 93]]).R - 16 / 3) < 1e-12);
+test('trade: at the target the stop trails each closed 4h candle; stop hit is −1R; both in one candle counts as the stop', () => {
+  // a short from 108 (stop 111, target 92): touches 92, then breaks out lower; the stop follows each candle's high
+  const run = [[108, 109, 100, 101], [101, 102, 91, 93], [93, 94, 80, 81], [81, 84, 75, 76], [76, 85, 76, 84]];
+  const won = tradeOf([...tradeBase, ...run]);
+  assert.equal(won.result, 'win'); assert.equal(won.trail, true);
+  assert.ok(Math.abs(won.R - (108 - 84) / 3) < 1e-12, 'out at 84, the last closed candle’s high: 8R, past the 5.3R target');
+  assert.equal(tradeOf([...tradeBase, ...run.slice(0, 4)]).result, 'open', 'still trailing');
   const lost = tradeOf([...tradeBase, [108, 112, 105, 106]]);
   assert.equal(lost.result, 'loss');
   assert.equal(lost.R, -1);
@@ -319,9 +323,13 @@ test('trade results with the scaling plan', async () => {
   const c = (t, o, h, l, cl) => ({ t, o, h, l, c: cl });
   const trade = { entry: 100, sl: 99, tp: 110 }, sig = c(0, 100, 100, 99, 100);
   // both adds fill (101, 102), then the target: 10 + 9 + 0.5 × 8 = 23R
-  const win = scaledResult([sig, c(1, 100, 101.5, 100, 101.5), c(2, 101.5, 102.5, 101, 102.4), c(3, 102.4, 110.5, 102, 110)], 0, trade, false);
-  assert.equal(win.result, 'win'); assert.equal(win.R, 23); assert.equal(win.rr, 23); assert.equal(win.adds, 2);
-  assert.ok(win.net < 23 && win.net > 22.5);
+  // then the trail: the stop follows each closed candle's low (102, then 109) and is hit at 109: 9 + 8 + 0.5 × 7 = 20.5R
+  const toTp = [sig, c(1, 100, 101.5, 100, 101.5), c(2, 101.5, 102.5, 101, 102.4), c(3, 102.4, 110.5, 102, 110)];
+  const win = scaledResult([...toTp, c(4, 110, 115, 109, 114), c(5, 114, 114.5, 108, 109)], 0, trade, false);
+  assert.equal(win.result, 'win'); assert.equal(win.trail, true); assert.equal(win.R, 20.5); assert.equal(win.rr, 23); assert.equal(win.adds, 2);
+  assert.ok(win.net < 20.5 && win.net > 20);
+  const trailing = scaledResult(toTp, 0, trade, false);
+  assert.equal(trailing.result, 'open'); assert.equal(trailing.trailing, true); assert.equal(trailing.trailStop, 102);
   // add 1 fills, then back to the entry: the add loses its 1R
   const entry = scaledResult([sig, c(1, 100, 101.5, 100, 101.5), c(2, 101.5, 101.6, 99.8, 100)], 0, trade, false);
   assert.equal(entry.result, 'entry'); assert.equal(entry.R, -1);
@@ -394,7 +402,7 @@ test('playbook read: New York in plain English, the bias, and what to look for',
   assert.match(lf.lines.map(x => x.text).join('|'), /Skip shorts: against the bias they grade C\.\|Room for 1 new at 12:00 \(4 of 5 open\)/);
   const { btcChips } = await import('../public/day-playbook.js');
   assert.deepEqual(btcChips(r, { pull: { dir: 'Long', back: 0.6 }, rsi: 41 }).map(c => c.cls), ['gold', 'cool']);
-  assert.match(btcChips(r, { pull: { dir: 'Long', back: 0.2 }, rsi: 69 }).map(c => c.text).join('|'), /gave back 20% of NY’s move\|⚠️ 1h RSI 69: already extended/);
+  assert.match(btcChips(r, { pull: { dir: 'Long', back: 0.2 }, rsi: 69 }).map(c => c.text).join('|'), /gave back 20% of NY’s move\|⚠️ 1h RSI 69: overbought, wait for a cool-off/);
   assert.match(lookingFor(r, { now: new Date(2026, 10, 7, 11) }).lines[0].text, /No new trades today/);           // Saturday
   assert.match(lookingFor(r, { now: new Date(2026, 10, 6, 11) }).lines.map(x => x.text).join('|'), /quarter size/);   // Friday
   assert.match(lookingFor({ ...r, dir: null }).lines[0].text, /Stand aside/);
@@ -420,7 +428,7 @@ test('limitTrade: entry at the limit, R:R from it, missed when price runs or wai
   const trade = { entry: 109, sl: 100, tp: 130, rr: 21 / 9, riskPct: 9 / 109, result: 'win', R: 21 / 9 };
   const k = 0, mk = (...xs) => [c(110, 100, 109), ...xs].map((x, i) => ({ ...x, t: i * 14_400_000 }));
   // long, limit at 103: R:R (130 − 103) / 3 = 9
-  const win = limitTrade(mk(c(108, 102.5), c(131, 104)), k, trade, false, 103);
+  const win = limitTrade(mk(c(108, 102.5), c(131, 104), c(140, 125), c(130, 120)), k, trade, false, 103);   // the target, then out on the trail at 125
   assert.deepEqual([win.entry, win.result, +win.rr.toFixed(2)], [103, 'win', 9]);
   assert.equal(limitTrade(mk(c(108, 99.5)), k, trade, false, 103).result, 'loss');                    // filled and stopped in one candle
   assert.equal(limitTrade(mk(c(131, 104)), k, trade, false, 103).missed, 'ran');                       // went to the target without filling
@@ -431,7 +439,25 @@ test('limitTrade: entry at the limit, R:R from it, missed when price runs or wai
 test('S and C+: an A grade that is a full swing failure with a golden R:R is S; an A grade that engulfed is C+', async () => {
   const { tierOf, GRADE_ORDER } = await import('../public/sfp.js');
   const { proposedRisk } = await import('../public/day-playbook.js');
-  assert.deepEqual(GRADE_ORDER.slice(0, 4), ['S+', 'A+', 'A++', 'A']);
+  assert.deepEqual(GRADE_ORDER.slice(0, 6), ['S++', 'S+', 'S', 'A+', 'A++', 'A']);
+  // 💎 S++: an S+ or an S that's also a ⭐ golden R:R in the ✨ golden zone
+  assert.equal(tierOf({ grade: 'A', why: 'x' }, { full: true, grr: true, zone: true }).grade, 'S++');
+  assert.equal(tierOf({ grade: 'A+', why: 'x' }, { whale: 'absorbed', btcRsi: 'cool', grr: true, zone: true }).grade, 'S++');
+  assert.equal(tierOf({ grade: 'A+', why: 'x' }, { whale: 'absorbed', btcRsi: 'cool', grr: true, zone: true }).from, 'A+');
+  assert.equal(tierOf({ grade: 'A+', why: 'x' }, { whale: 'absorbed', btcRsi: 'cool', zone: true }).grade, 'S', 'an S without ⭐ stays S');
+  assert.equal(tierOf({ grade: 'A+', why: 'x' }, { whale: 'absorbed', btcRsi: 'deep', grr: true, zone: true }).grade, 'S++', 'S++ via 🐋 skips the cool-off');
+  assert.equal(tierOf({ grade: 'A+', why: 'x' }, { whale: 'absorbed', btcRsi: 'deep', grr: true }).grade, 'A+', 'no golden zone, no cool-off: stays A+');
+  assert.equal(tierOf({ grade: 'A', why: 'x' }, { full: true, grr: true }).grade, 'S+', 'no golden zone: S+');
+  assert.equal(tierOf({ grade: 'A', why: 'x' }, { grr: true, zone: true }).grade, 'A', 'an A with ⭐ and ✨ alone stays A');
+  // 🐋 S: an A or A+ with whale absorption; S+ still wins when both apply; A++ and B stay as they are
+  assert.equal(tierOf({ grade: 'A', why: 'x' }, { whale: 'absorbed', btcRsi: 'cool' }).grade, 'S');
+  assert.equal(tierOf({ grade: 'A', why: 'x' }, { whale: 'absorbed' }).grade, 'A', 'no BTC cool-off: stays A');
+  assert.equal(tierOf({ grade: 'A', why: 'x' }, { whale: 'absorbed', btcRsi: 'deep' }).grade, 'A');
+  assert.equal(tierOf({ grade: 'A+', why: 'x' }, { whale: 'absorbed', btcRsi: 'cool' }).from, 'A+');
+  assert.equal(tierOf({ grade: 'A+', why: 'x' }, { whale: 'absorbed', full: true, grr: true }).grade, 'S+');
+  assert.equal(tierOf({ grade: 'A++', why: 'x' }, { whale: 'absorbed' }).grade, 'A++');
+  assert.equal(tierOf({ grade: 'B', why: 'x' }, { whale: 'absorbed' }).grade, 'B');
+  assert.equal(tierOf({ grade: 'A', why: 'x' }, { whale: 'crowded' }).grade, 'A');
   const a = { grade: 'A++', why: 'with the NY bias ▲, BTC swept too' };
   assert.equal(tierOf(a, { full: true, grr: true }).grade, 'S+');
   assert.equal(tierOf(a, { full: true, grr: true }).from, 'A++');
@@ -506,4 +532,68 @@ test('the backtest locks +3R on a far target once +7R is reached', async () => {
   const sc = scaledResult(candles, 0, { ...far, rr: 20, riskPct: 0.01 }, false);
   assert.equal(sc.result, 'lock');
   assert.ok(sc.R > 3);                                                                              // with both adds in, more than the first entry's +3R
+});
+
+test('whaleAbsorption: retail panic absorbed = 🐋, our side paying heavy funding = ⚠️ crowded', async () => {
+  const { whaleAbsorption, H4: h4 } = await import('../public/sfp.js');
+  const t = 400 * h4, H8 = 8 * 3_600_000;
+  // 30 days of ordinary taker flow (half the volume is taker buys), then the signal candle
+  const taker = Array.from({ length: 200 }, (_, i) => ({ t: t - (200 - i) * h4, vol: 100, buy: 50 + (i % 5) }));
+  const fund = rate => [{ t: t - H8, rate }, { t: t + h4 - 1, rate }];
+  // a long: shorts pay (negative funding) and the candle's market orders were 80% sells, yet it closed inside
+  const dump = [...taker, { t, vol: 100, buy: 20 }];
+  assert.equal(whaleAbsorption('Long', t, { funding: fund(-0.0002), taker: dump })?.kind, 'absorbed');
+  // the same flow without the panic: no tag
+  assert.equal(whaleAbsorption('Long', t, { funding: fund(0.00005), taker: dump }), null);
+  // panic, but ordinary taker flow: no tag
+  assert.equal(whaleAbsorption('Long', t, { funding: fund(-0.0002), taker: [...taker, { t, vol: 100, buy: 52 }] }), null);
+  // longs paying heavily for a long: crowded, whatever the flow
+  assert.equal(whaleAbsorption('Long', t, { funding: fund(0.0003), taker: dump })?.kind, 'crowded');
+  // a short reads it mirrored: longs paying = the crowd against the short; 80% taker buys = absorbed
+  assert.equal(whaleAbsorption('Short', t, { funding: fund(0.0002), taker: [...taker, { t, vol: 100, buy: 80 }] })?.kind, 'absorbed');
+  // 4h funding is scaled to 8h: −0.00004 every 4h = −0.00008 per 8h, past the panic line
+  const f4 = [{ t, rate: -0.00004 }, { t: t + h4, rate: -0.00004 }];
+  assert.equal(whaleAbsorption('Long', t, { funding: f4, taker: dump })?.kind, 'absorbed');
+  // no data, no tag
+  assert.equal(whaleAbsorption('Long', t, {}), null);
+});
+
+test('projected win rate: the grade sets the base, a tag that wins more lifts it, small samples barely move it', async () => {
+  const { winModel, projectWin } = await import('../public/sfp.js');
+  const sig = (g, extra = {}, won = false, i = 0) => ({ t: i, grade: { grade: g }, full: false, trend: 'neutral', ...extra, won });
+  const list = [];
+  for (let i = 0; i < 200; i++) list.push(sig('A', {}, i % 4 === 0, i));                 // A: 25%
+  for (let i = 0; i < 200; i++) list.push(sig('C', {}, i % 10 === 0, i));                // C: 10%
+  for (let i = 0; i < 100; i++) list.push(sig('A', { full: true }, i % 2 === 0, i));     // A + 💥: 50%
+  for (let i = 0; i < 3; i++) list.push(sig('C', { goldenRR: true }, true, i));         // 3 lucky ⭐: too few to trust
+  const m = winModel(list, s => s.won);
+  const a = projectWin(sig('A'), m).p, c = projectWin(sig('C'), m).p, af = projectWin(sig('A', { full: true }), m);
+  assert.ok(a > c, 'A above C');
+  assert.ok(af.p > a + 0.05, 'the full sweep lifts an A');
+  assert.equal(af.combo.n, 100);
+  assert.ok(projectWin(sig('C', { goldenRR: true }), m).p < 0.25, 'three wins don’t make a 100% tag');
+  assert.equal(winModel(list.slice(0, 10), s => s.won), null);
+});
+
+test('🪜 ladder: five limits 70–90% back, each a fifth of the risk; a rung that never fills adds 0R', async () => {
+  const { ladderTrade, candleShape, LADDER } = await import('../public/sfp.js');
+  const h = 4 * 3_600_000;
+  // a long whose signal candle closed green near its high (100 → 110, low 98): rungs at 101.6 … 99.2, stop 98, target 120
+  const c = [{ t: 0, o: 105, h: 106, l: 99, c: 100 }, { t: h, o: 100, h: 110, l: 98, c: 109 }];
+  const sh = candleShape(c[0], c[1], 'Long');
+  assert.equal(sh.ladder.length, LADDER.length);
+  assert.ok(Math.abs(sh.ladder[0] - (110 - 0.7 * 12)) < 1e-9 && Math.abs(sh.ladder[4] - (110 - 0.9 * 12)) < 1e-9);
+  const trade = { entry: 109, sl: 98, tp: 120, rr: 1, riskPct: 0.1 };
+  // price dips to 100.5: the 101.6 and 101.0 rungs fill, 100.4 and deeper don't; then it runs to the target
+  // (then the trail: the stop to that candle's low, 103, then 118, hit at 118)
+  const after = [...c, { t: 2 * h, o: 109, h: 109, l: 100.5, c: 104 }, { t: 3 * h, o: 104, h: 121, l: 103, c: 120 }, { t: 4 * h, o: 120, h: 125, l: 118, c: 124 }, { t: 5 * h, o: 124, h: 124, l: 115, c: 116 }];
+  const lt = ladderTrade(after, 1, trade, false, sh.ladder);
+  assert.equal(lt.ladder.filled.length, 2);                                  // 101.6 and 101.0 filled, 100.4 and below didn't
+  assert.equal(lt.trail, true); assert.equal(lt.scaled.trail, true);
+  const rungR = px => (118 - px) / (px - 98);
+  assert.ok(Math.abs(lt.R - 0.2 * (rungR(sh.ladder[0]) + rungR(sh.ladder[1]))) < 1e-9);
+  assert.equal(lt.result, 'win');
+  // no fill at all: missed
+  const run = [...c, { t: 2 * h, o: 109, h: 121, l: 108, c: 120 }];
+  assert.equal(ladderTrade(run, 1, trade, false, sh.ladder).missed, 'ran');
 });

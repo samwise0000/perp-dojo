@@ -51,9 +51,9 @@ function rsiGauge(x) {
   const rsi = x.btc?.rsi, long = x.read?.dir !== 'Short', t = x.rsiTag, z = BTC_RSI_BANDS;
   const top = el('div', 'pbo-rsi-top');
   top.append(el('b', 'pbo-rsi-n ' + (t ? (t.kind === 'cool' ? 'cool' : 'warn') : ''), Number.isFinite(rsi) ? String(Math.round(rsi)) : '—'),
-    el('span', 'pbo-rsi-what', !Number.isFinite(rsi) ? '' : !t ? 'neutral' : { cool: '🧊 cooled off: good', deep: `⚠️ stretched against ${sideOf(x)}`, chase: '⚠️ extended: wait for a cool-off' }[t.kind]));
-  const zones = long ? [[0, z.deep, 'warn', 'stretched'], [z.deep, z.cool, 'cool', 'cooled'], [z.cool, z.chase, 'mid', 'neutral'], [z.chase, 100, 'warn', 'extended']]
-    : [[0, 100 - z.chase, 'warn', 'extended'], [100 - z.chase, 100 - z.cool, 'mid', 'neutral'], [100 - z.cool, 100 - z.deep, 'cool', 'cooled'], [100 - z.deep, 100, 'warn', 'stretched']];
+    el('span', 'pbo-rsi-what', !Number.isFinite(rsi) ? '' : !t ? 'neutral' : { cool: '🧊 cooled off: good', deep: `⚠️ ${long ? 'oversold' : 'overbought'}: against ${sideOf(x)}`, chase: `⚠️ ${long ? 'overbought' : 'oversold'}: wait for a cool-off` }[t.kind]));
+  const zones = long ? [[0, z.deep, 'warn', 'oversold'], [z.deep, z.cool, 'cool', 'cooled'], [z.cool, z.chase, 'mid', 'neutral'], [z.chase, 100, 'warn', 'overbought']]
+    : [[0, 100 - z.chase, 'warn', 'oversold'], [100 - z.chase, 100 - z.cool, 'mid', 'neutral'], [100 - z.cool, 100 - z.deep, 'cool', 'cooled'], [100 - z.deep, 100, 'warn', 'overbought']];
   const track = el('div', 'pbo-track rsi'), labels = el('div', 'pbo-zl');
   for (const [a, c, k, name] of zones) {
     const s = el('i', k); s.style.left = a + '%'; s.style.width = (c - a) + '%'; track.append(s);

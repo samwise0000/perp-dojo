@@ -4,7 +4,7 @@
 // your net P&L ÷ (your first order's size × the signal's entry-to-stop distance).
 // The same signal's plan result (with the adds, after fees) is the yardstick, and
 // the year before your start date says what the plan should average.
-import { loadSignals, atCloseSignals } from './signals.js';
+import { loadSignals, atCloseSignals, rrEl } from './signals.js';
 import { showOnChart } from './signal-chart.js';
 import { H4, GRADE_ORDER } from './sfp.js';
 import { proposedRisk, picksAt, setupName } from './day-playbook.js';
@@ -159,7 +159,7 @@ export async function renderForward(root, { ctx, trades, execs, fmt }) {
   for (const g of GRADE_ORDER) {
     const x = rows.filter(r => r.grade === g), xs = x.filter(r => r.R !== null), e = expect[g];
     if (!x.length && !e?.n) continue;
-    const tr = el('tr'), b = el('td'); b.append(el('span', 'sig-grade g-' + g.toLowerCase().replace(/\+/g, 'plus'), g === 'A++' ? '★ A++' : g === 'S+' ? '👑 S+' : g));
+    const tr = el('tr'), b = el('td'); b.append(el('span', 'sig-grade g-' + g.toLowerCase().replace(/\+/g, 'plus'), g === 'A++' ? '★ A++' : g === 'S++' ? '💎 S++' : g === 'S+' ? '👑 S+' : g === 'S' ? '🐋 S' : g));
     const ya = avg(xs.map(r => r.R)), pa = avg(xs.filter(r => r.plan !== null).map(r => r.plan));
     tr.append(b, el('td', 'num', String(x.length)), el('td', 'num ' + cls(ya), rText(ya)), el('td', 'num ' + cls(pa), rText(pa)), el('td', 'num muted', e?.n ? `${rText(e.avg)} (${e.n})` : '—'));
     gb.append(tr);
@@ -195,7 +195,7 @@ export async function renderForward(root, { ctx, trades, execs, fmt }) {
   const tb = el('tbody');
   for (const r of [...rows].reverse()) {
     const tr = el('tr', r.onPlan ? '' : 'fw-off');
-    const g = el('td'); if (r.grade) g.append(el('span', 'sig-grade g-' + r.grade.toLowerCase().replace(/\+/g, 'plus'), r.grade === 'A++' ? '★ A++' : r.grade === 'S+' ? '👑 S+' : r.grade)); else g.textContent = '—';
+    const g = el('td'); if (r.grade) g.append(el('span', 'sig-grade g-' + r.grade.toLowerCase().replace(/\+/g, 'plus'), r.grade === 'A++' ? '★ A++' : r.grade === 'S++' ? '💎 S++' : r.grade === 'S+' ? '👑 S+' : r.grade === 'S' ? '🐋 S' : r.grade)); else g.textContent = '—';
     const sigTxt = !r.sig ? 'no signal' : !r.onPlan ? 'not taken by the plan' : `${r.sig.trade.rr.toFixed(1)}R target`;
     const gap = r.R !== null && r.plan !== null ? r.R - r.plan : null;
     tr.append(el('td', '', when(r.openedAt)), el('td', '', coin(r.symbol)), el('td', r.dir === 'Long' ? 'pos' : 'neg', r.dir), g, el('td', 'muted', sigTxt), el('td', 'num', String(r.adds)),
@@ -214,9 +214,9 @@ export async function renderForward(root, { ctx, trades, execs, fmt }) {
     const mt = el('table', 'data compact'); mt.innerHTML = '<thead><tr><th>Close</th><th>Pair</th><th>Side</th><th>Grade</th><th class="num">Target</th><th class="num">Plan</th></tr></thead>';
     const mb = el('tbody');
     for (const s of [...missed].reverse()) {
-      const tr = el('tr', 'clickable'), g = el('td'); g.append(el('span', 'sig-grade g-' + s.grade.grade.toLowerCase().replace(/\+/g, 'plus'), s.grade.grade === 'A++' ? '★ A++' : s.grade.grade === 'S+' ? '👑 S+' : s.grade.grade));
+      const tr = el('tr', 'clickable'), g = el('td'); g.append(el('span', 'sig-grade g-' + s.grade.grade.toLowerCase().replace(/\+/g, 'plus'), s.grade.grade === 'A++' ? '★ A++' : s.grade.grade === 'S++' ? '💎 S++' : s.grade.grade === 'S+' ? '👑 S+' : s.grade.grade === 'S' ? '🐋 S' : s.grade.grade));
       const p = planR(s);
-      tr.append(el('td', '', when(s.t + H4)), el('td', '', coin(s.symbol)), el('td', s.side === 'Long' ? 'pos' : 'neg', s.side), g, el('td', 'num', `${s.trade.rr.toFixed(1)}R`), el('td', 'num ' + cls(p), p === null ? 'open' : rText(p)));
+      tr.append(el('td', '', when(s.t + H4)), el('td', '', coin(s.symbol)), el('td', s.side === 'Long' ? 'pos' : 'neg', s.side), g, rrEl('td', 'num', s.trade), el('td', 'num ' + cls(p), p === null ? 'open' : rText(p)));
       tr.onclick = () => showOnChart(s, missed);
       mb.append(tr);
     }

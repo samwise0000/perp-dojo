@@ -10,6 +10,7 @@ import account from './api/account.js';
 import pull from './api/pull.js';
 import snapshot from './api/snapshot.js';
 import klines from './api/klines.js';
+import flow from './api/flow.js';
 import positions from './api/positions.js';
 import sfpAlert from './api/sfp-alert.js';
 import { json } from './lib/http.mjs';
@@ -18,7 +19,7 @@ const PORT = Number(process.env.PORT) || 8090;
 const HOST = '127.0.0.1';
 const PUBLIC = fileURLToPath(new URL('./public', import.meta.url));
 const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png' };
-const ROUTES = { '/api/status': status, '/api/account': account, '/api/pull': pull, '/api/snapshot': snapshot, '/api/klines': klines, '/api/positions': positions, '/api/sfp-alert': sfpAlert };
+const ROUTES = { '/api/status': status, '/api/account': account, '/api/pull': pull, '/api/snapshot': snapshot, '/api/klines': klines, '/api/flow': flow, '/api/positions': positions, '/api/sfp-alert': sfpAlert };
 
 async function serveStatic(res, urlPath) {
   const rel = urlPath === '/' ? 'index.html' : decodeURIComponent(urlPath).replace(/^\/+/, '');

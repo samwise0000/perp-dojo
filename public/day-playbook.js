@@ -84,11 +84,13 @@ export function setupName(grade, closeAt, tag) {
 export function proposedRisk(grade, closeAt, { tag = null, from = null, skip = null } = {}) {
   if (skip === 'ema') { const t = new Date(closeAt), i = SESSION.indexOf(t.getHours()); return { pct: 0, slot: i < 0 || t.getMinutes() ? null : SLOTS[t.getDay()][i], why: 'a short while BTC is above its 4h EMA100: skip (those shorts lost in every one of 5 years)' }; }
   // S tier: a full swing failure with a golden R:R on an A grade, sized as that A grade, at the same closes
+  if (grade === 'S++') { const r = proposedRisk(from || 'A', closeAt, { tag }); return { ...r, why: r.pct ? `S++ tier (${from || 'an A grade'}: S+ or 🐋 A with ⭐ golden R:R in the ✨ golden zone): sized as ${from || 'A'}, ${r.why.replace(/^grade \S+ /, '')}` : r.why }; }
+  if (grade === 'S') { const r = proposedRisk(from || 'A', closeAt, { tag }); return { ...r, why: r.pct ? `S tier (${from || 'an A grade'} with 🐋 whale absorption, 🧊 BTC cooled): sized as ${from || 'A'}, ${r.why.replace(/^grade \S+ /, '')}` : r.why }; }
   if (grade === 'S+') { const r = proposedRisk(from || 'A', closeAt, { tag }); return { ...r, why: r.pct ? `S+ tier (${from || 'an A grade'}, full swing failure + golden R:R): sized as ${from || 'A'}, ${r.why.replace(/^grade \S+ /, '')}` : r.why }; }
   const t = new Date(closeAt), i = SESSION.indexOf(t.getHours());
   const slot = i < 0 || t.getMinutes() ? null : SLOTS[t.getDay()][i];
   const base = RISK_PCT[grade] ?? 0;
-  if (!base) return { pct: 0, slot, why: grade === 'C++' ? 'grade C++ (a NY fade): tracking only, no size' : grade === 'C+' ? 'grade C+ (an A grade whose candle engulfed): tracking only, no size, a limit 70% back' : `grade ${grade}: skip` };
+  if (!base) return { pct: 0, slot, why: grade === 'C++' ? 'grade C++ (a NY fade): tracking only, no size' : grade === 'C+' ? 'grade C+ (an A grade whose candle engulfed): tracking only, no size, a 🪜 ladder 70–90% back' : `grade ${grade}: skip` };
   if (!slot) {
     const h = t.getHours(), late = !t.getMinutes() && OFF_HOURS.includes(h);
     // Thursday and Friday nights' 00:00 and 04:00 (Friday's and Saturday's dates): the late setups, trade-cautiously.
@@ -96,7 +98,7 @@ export function proposedRisk(grade, closeAt, { tag = null, from = null, skip = n
     const friNight = late && [5, 6].includes(t.getDay()) && BPLUS_HOURS.includes(h);
     const off = late && ((t.getDay() >= 1 && t.getDay() <= 4) || friNight);
     const r = (() => {
-      if (off && grade === 'A++' && tag === 'late' && BPLUS_HOURS.includes(h)) return { pct: LATE_APP_PCT, slot, why: '🌃 Late A++ (NY open, 4h RSI stretched) at a late close, Mon–Thu: half a percent' };
+      if (off && grade === 'A++' && tag === 'late' && BPLUS_HOURS.includes(h)) return { pct: LATE_APP_PCT, slot, why: '🌃 Late A++ (NY open, 4h RSI oversold / overbought) at a late close, Mon–Thu: half a percent' };
       if (off && grade === 'A++' && tag === 'late') return { pct: 0, slot, why: '🌃 Late A++ at 20:00 lost money in the backtest: skip (only 00:00 and 04:00)' };
       if (off && grade === 'B+' && BPLUS_HOURS.includes(h)) return { pct: OFF_HOURS_PCT, slot, why: '🌊 NY fade at a late close (Mon–Thu): a quarter percent, for tracking' };
       if (off && grade === 'B+') return { pct: 0, slot, why: 'B+ at 20:00 lost money in the backtest: skip (only 00:00 and 04:00)' };
@@ -204,7 +206,7 @@ export function btcChips(read, btc) {
       : b < 0 ? { text: `BTC ${dir === 'Long' ? 'above' : 'below'} NY’s close: no pullback yet`, cls: 'muted' } : { text: `BTC gave back ${pct} of NY’s move`, cls: 'muted' });
   }
   const t = btcRsiTag(dir, btc.rsi);
-  if (t) chips.push({ text: t.kind === 'cool' ? `🧊 1h RSI ${t.rsi}: cooled off` : t.kind === 'deep' ? `⚠️ 1h RSI ${t.rsi}: stretched against ${side}` : `⚠️ 1h RSI ${t.rsi}: already extended, wait for a cool-off`, cls: t.kind === 'cool' ? 'cool' : 'warn' });
+  if (t) chips.push({ text: t.kind === 'cool' ? `🧊 1h RSI ${t.rsi}: cooled off` : t.kind === 'deep' ? `⚠️ 1h RSI ${t.rsi}: ${dir === 'Long' ? 'oversold' : 'overbought'}, against ${side}` : `⚠️ 1h RSI ${t.rsi}: ${dir === 'Long' ? 'overbought' : 'oversold'}, wait for a cool-off`, cls: t.kind === 'cool' ? 'cool' : 'warn' });
   else if (Number.isFinite(btc.rsi)) chips.push({ text: `1h RSI ${Math.round(btc.rsi)}: neutral`, cls: 'muted' });
   return chips;
 }
@@ -240,15 +242,17 @@ export function strategiesToday(now = new Date()) {
   const out = [], mains = SESSION.filter((h, i) => SLOTS[d][i] !== 'skip');
   // S: an A grade that's a full swing failure with a golden R:R, sized as its A grade, wherever the A grades are taken
   const sBy = mains.map(h => [h, proposedRisk('A', at(h))]).filter(([, r]) => r.pct > 0);
+  if (sBy.length) out.push({ name: '💎 S++', what: 'S+ or 🐋 A / A+ with ⭐ golden R:R in the ✨ golden zone', pct: 'as its A', note: '', size: 'as its A grade', caution: sBy.every(([, r]) => r.slot === 'caution') });
   if (sBy.length) out.push({ name: 'S+', what: 'full swing failure + golden R:R', pct: 'as its A', note: '', size: 'as its A grade', caution: sBy.every(([, r]) => r.slot === 'caution') });
-  for (const [g, name, what] of [['A++', '★ A++', 'BTC swept the same way'], ['A+', 'A+', 'alt’s 4h RSI stretched'], ['A', 'A', 'with the bias']]) {
+  if (sBy.length) out.push({ name: '🐋 S', what: 'A or A+ with whale absorption, BTC cooled', pct: 'as its A', note: '', size: 'as its A grade', caution: sBy.every(([, r]) => r.slot === 'caution') });
+  for (const [g, name, what] of [['A++', '★ A++', 'BTC swept the same way'], ['A+', 'A+', 'alt’s 4h RSI oversold / overbought'], ['A', 'A', 'with the bias']]) {
     const by = mains.map(h => [h, proposedRisk(g, at(h))]).filter(([, r]) => r.pct > 0);
     if (!by.length) continue;
     const top = Math.max(...by.map(([, r]) => r.pct)), others = by.filter(([, r]) => r.pct !== top);
     const note = others.length ? others.map(([h, r]) => `${pctText(r.pct)} at ${hh(h)}`).join(', ') : '';
     out.push({ name, what, pct: pctText(top), note, size: pctText(top) + (note ? ` · ${note}` : ''), caution: by.every(([, r]) => r.slot === 'caution') });
   }
-  for (const [g, tag, hours, name, what] of [['A++', 'late', [0, 4], '🌃 Late A++', 'NY open, RSI stretched'], ['A', 'midnight', [0], '🌙 Midnight sweep', 'BTC swept mid-NY'], ['B+', 'fade', [4], '🌊 NY fade', 'fades a 2%+ NY session']]) {
+  for (const [g, tag, hours, name, what] of [['A++', 'late', [0, 4], '🌃 Late A++', 'NY open, RSI oversold / overbought'], ['A', 'midnight', [0], '🌙 Midnight sweep', 'BTC swept mid-NY'], ['B+', 'fade', [4], '🌊 NY fade', 'fades a 2%+ NY session']]) {
     const by = hours.map(h => [h, proposedRisk(g, at(h, 1), { tag })]).filter(([, r]) => r.pct > 0);
     const same = by.every(([, r]) => r.pct === by[0][1].pct);
     if (by.length) out.push({ name, what, pct: pctText(by[0][1].pct), note: same ? by.map(([h]) => hh(h)).join(' · ') : by.map(([h, r]) => `${pctText(r.pct)} at ${hh(h)}`).join(' · '), size: same ? `${pctText(by[0][1].pct)} at ${by.map(([h]) => hh(h)).join(' / ')}` : by.map(([h, r]) => `${pctText(r.pct)} at ${hh(h)}`).join(' · '), tonight: true, caution: by.every(([, r]) => r.slot === 'caution') });
@@ -267,6 +271,7 @@ export function guidelines({ equity = null, hidden = false, money = v => `$${Mat
   const guide = [
     ['🎯', 'Entry', 'At the 4h close · stop at the wick · target the opposing level'],
     ['➕', 'Scale in', '+1R: add 1×, stops → entry · +2R: add ½×, stops → break-even'],
+    ['🏁', 'Exit', 'At the target don’t close: trail the stop to each closed 4h candle’s low (a short: its high)'],
     ['📏', 'Risk', `A+ / A++ ${pctText(RISK_PCT['A+'])}${usd('A+')} · A ${pctText(RISK_PCT.A)}${usd('A')} · half on Weak, ¼ on Caution`],
     ['🔢', 'Limits', `${PICKS_PER_CLOSE} new a close (1 on Caution) · ${MAX_POSITIONS} open · best grade, then R:R`],
     ['🌙', 'Late', `00:00 / 04:00, Sun–Wed nights: 🌃 Late A++ ${pctText(LATE_APP_PCT)} · 🌙 / 🌊 ${pctText(OFF_HOURS_PCT)} · Thu–Fri nights ¼`],
@@ -320,9 +325,20 @@ export function positionNotes(p, { sessions = [], now = new Date(), price = v =>
     else notes.push({ cls: 'warn', text: `Against the NY bias ${mark(nowBias)}: consider tightening or closing` });
   }
   if (sessions?.[0]?.live && !sessions[0].pending) notes.push({ cls: 'muted', text: 'NY session open: the bias can change at its close' });
-  if (p.sl && p.entry && p.mark) {
+  // 🎯→ past the target the plan trails the stop behind each closed 4h candle (see trailFrom in sfp.js)
+  const pastTp = plan?.tp && p.mark ? d * (p.mark - plan.tp) >= 0 || plan.trailing : false;
+  if (pastTp) {
+    const ts = plan.trailStop, set = ts != null && p.sl && d * (p.sl - ts) >= 0;
+    notes.push(ts == null
+      ? { cls: 'pos', text: `At the target: don’t close, trail the stop to each closed 4h candle’s ${long ? 'low' : 'high'}` }
+      : set ? { cls: 'pos', text: `Trailing past the target: stop ${price(p.sl)}, move it to each 4h close’s ${long ? 'low' : 'high'}` }
+      : { cls: 'warn', text: `Trailing past the target: move the stop to ${price(ts)}, the last 4h candle’s ${long ? 'low' : 'high'}` });
+    // the softer option: bank half, trail the rest (about 0.2R a trade less in the backtest, half the give-back)
+    if (ts == null || !set) notes.push({ cls: 'muted', text: 'Optional: take half off here and trail the rest, a little less on average but half the give-back' });
+  }
+  if (p.sl && p.entry && p.mark && !pastTp) {
     const risk = d * (p.entry - p.sl);
-    if (risk <= 0) notes.push({ cls: 'pos', text: 'Stop at or past entry: protected, hold to target' });
+    if (risk <= 0) notes.push({ cls: 'pos', text: 'Stop at or past entry: protected, hold to the target, then trail' });
     else {
       const r = d * (p.mark - p.entry) / risk, at = n => price(p.entry + d * n * risk);
       const rs = `${r >= 0 ? '+' : '−'}${Math.abs(r).toFixed(1)}R`;

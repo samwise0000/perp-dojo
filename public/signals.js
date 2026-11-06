@@ -2,12 +2,12 @@
 // rules and filters as the Telegram alerts (sfp.js ALERT_SETTINGS), so the
 // site and the bot always agree. The Signals tab lists them all; the dashboard
 // shows the latest few. Candles come from the IndexedDB cache in signal-chart.js.
-import { detect, H4, ALERT_SETTINGS, DEFAULT_PAIRS, trendMap, btcSide, gradeSetup, rsi, GRADE_ORDER, btcRsiTag, candleShape, limitTrade, tierOf, scalePlan, emaGuard, SHORT_EMA, atrAt, goldenRR, goldenRaw, fullSweep, FAR_LOCK } from './sfp.js';
+import { ladderTrade, detect, H4, ALERT_SETTINGS, DEFAULT_PAIRS, trendMap, btcSide, gradeSetup, rsi, GRADE_ORDER, btcRsiTag, candleShape, limitTrade, tierOf, scalePlan, emaGuard, SHORT_EMA, atrAt, goldenRR, goldenRaw, fullSweep, FAR_LOCK, whaleAbsorption, WHALE_TIP, winModel, projectWin, signalTags } from './sfp.js';
 import { sessionList, nyBiasAt, nyFadeAt, fadesNy, nyPullbackAt, inGoldenZone } from './bias.js';
 import { setupName, proposedRisk, picksAt } from './day-playbook.js';
 import { idbGet, idbSet } from './db.js';
 import { fmtDuration } from './metrics.js';
-import { candlesFor, pool, showOnChart, bindCharts, adds, setAdds, outcomeOf } from './signal-chart.js';
+import { candlesFor, pool, showOnChart, bindCharts, adds, setAdds, outcomeOf, outcomeIn, hooks } from './signal-chart.js';
 
 const DAY = 86_400_000;
 const $ = s => document.querySelector(s);
@@ -33,7 +33,9 @@ export function planFor(pos) {
     .sort((a, b) => Math.abs(a.t + H4 - pos.openedAt) - Math.abs(b.t + H4 - pos.openedAt))[0];
   if (!near) return null;
   const t = [near.atClose, near.trade].filter(x => x && !x.missed).sort((a, b) => Math.abs(a.entry - pos.entry) - Math.abs(b.entry - pos.entry))[0];
-  return t ? { entry: t.entry, sl: t.sl, tp: t.tp, rr: t.rr, signal: near } : null;
+  // past the target the plan trails: the stop for the last closed 4h candle, from the signal's own walk
+  const sc = t?.scaled?.trailing ? t.scaled : t?.trailing ? t : null;
+  return t ? { entry: t.entry, sl: t.sl, tp: t.tp, rr: t.rr, signal: near, trailing: Boolean(sc), trailStop: sc?.trailStop ?? null } : null;
 }
 export function loadSignals(ctx, days) {
   bindCharts(ctx); ctx_ = ctx;
@@ -58,15 +60,16 @@ async function compute(days) {
       const candles = (await candlesFor(symbol, start).catch(() => candlesFor(symbol, start))).filter(c => c.t >= start);
       progress.pairs.set(symbol, 'ok'); notify();
       const last = candles.at(-1), r14 = rsi(candles);
+      const flow = await flowFor(symbol, since - 35 * DAY).catch(() => null);      // 🐋 funding + taker volume, optional
       const byT = new Map(candles.map(c => [c.t, c]));
       return detect(candles, o).signals.filter(s => s.t >= since).map(s => {
         // how it's doing now, for signals younger than 24h
         const run = last && last.t > s.t ? (s.side === 'Short' ? s.close - last.c : last.c - s.close) / s.close : null;
         const shape = candleShape(candles[s.k - 1], candles[s.k], s.side);
-        // closed away from the level: the plan is a limit 70% back toward the wick, not the close
-        const trade = shape?.away ? limitTrade(candles, s.k, s.trade, s.side === 'Short', shape.limit) : s.trade;
+        // closed away from the level: the plan is a 🪜 ladder of 5 limits 70–90% back toward the wick, not the close
+        const trade = shape?.away ? ladderTrade(candles, s.k, s.trade, s.side === 'Short', shape.ladder) : s.trade;
         const best = bestRs(candles, s.k, trade, s.side === 'Short');
-        return { ...s, trade, best, atClose: s.trade, atr: atrAt(candles, s.k), full: fullSweep(s, t => byT.get(t)), symbol, running: run, rsi: r14[s.k], shape };
+        return { ...s, trade, best, atClose: s.trade, atr: atrAt(candles, s.k), full: fullSweep(s, t => byT.get(t)), symbol, running: run, rsi: r14[s.k], shape, whale: flow ? whaleAbsorption(s.side, s.t, flow) : null };
       });
     } catch (e) { errors.push(symbol); progress.pairs.set(symbol, 'err'); notify(); return []; }
   });
@@ -88,13 +91,19 @@ async function compute(days) {
     const trend = btcSide(s, trends, o.neutralBand);
     const ny = sessions ? nyBiasAt(sessions, s.t + H4) : null;
     const bRsi = btcRsiTag(s.side, rsiAt.get(s.t + H4))?.kind ?? null;
-    const grade = sessions ? emaGuard(tierOf(gradeSetup(s.side, { ny, swept: btcSfp.has(`${s.t}:${s.side}`), rsi: s.rsi, fade: fadesNy(s.side, fadeAt(s.t + H4)) }), { shape: s.shape, full: s.full, grr: goldenRaw(s.atClose ?? s.trade, s.atr), btcRsi: bRsi, rr: (s.atClose ?? s.trade)?.rr ?? null }), s.side, trends100.get(s.t - H4)?.up) : null;
-    const gradeC = grade;
     const pull = pullAt(s.t + H4), golden = inGoldenZone(s.side, pull, new Date(s.t + H4).getHours()) ? pull.back : null;
+    const grade = sessions ? emaGuard(tierOf(gradeSetup(s.side, { ny, swept: btcSfp.has(`${s.t}:${s.side}`), rsi: s.rsi, fade: fadesNy(s.side, fadeAt(s.t + H4)) }), { shape: s.shape, full: s.full, grr: goldenRaw(s.atClose ?? s.trade, s.atr), btcRsi: bRsi, rr: (s.atClose ?? s.trade)?.rr ?? null, whale: s.whale?.kind ?? null, zone: golden != null }), s.side, trends100.get(s.t - H4)?.up) : null;
+    const gradeC = grade;
     const btcRsi = gradeC && !['C', 'C++'].includes(gradeC.grade) ? btcRsiTag(s.side, rsiAt.get(s.t + H4)) : null;   // with the NY bias only
     return { ...s, trend, counter: trend === 'counter', btc: trends.get(s.t - H4) || null, ny, grade: gradeC, golden, btcRsi, goldenRR: goldenRR(gradeC?.grade, s.atClose ?? s.trade, s.atr) };
   }).sort((a, b) => b.t - a.t || a.symbol.localeCompare(b.symbol));
   markPicks(signals);
+  // the projected win rate's model, from this year of closed signals (kept for the dashboard's two weeks)
+  if (days >= 180) {
+    const models = { adds: winModel(signals, s => wonOf(s, true)), first: winModel(signals, s => wonOf(s, false)) };
+    if (models.adds && models.first) { savedModels = models; try { localStorage.setItem(MODEL_KEY, JSON.stringify(models)); } catch {} }
+    savedHist = historyOf(signals); try { localStorage.setItem(HIST_KEY, JSON.stringify(savedHist)); } catch {}
+  }
   progress.stage = 'done'; notify();
   return { signals, errors, at: Date.now(), days };
 }
@@ -115,15 +124,149 @@ async function hourly(symbol, start) {
   return all;
 }
 
+// what each grade is, in a sentence (the grade checkboxes and the ⓘ on the grade stats)
+// the size the playbook gives a grade, read from proposedRisk on a Tuesday: the main closes and the late ones
+function sizeNote(g) {
+  const tue = h => { const d = new Date(); d.setDate(d.getDate() + ((2 - d.getDay() + 7) % 7)); d.setHours(h, 0, 0, 0); return d.getTime(); };
+  const at = h => proposedRisk(g, tue(h), { from: 'A' }).pct;
+  const main = [8, 12, 16].map(at), late = [0, 4].map(at), lateTxt = late.some(Boolean) ? `, ${late[0] === late[1] ? `${late[0]}% at 00:00 / 04:00` : late.map((x, i) => `${x}% at ${['00:00', '04:00'][i]}`).join(', ')}` : '';
+  const s = g === 'S++' || g === 'S+' || g === 'S' ? 'as the A grade under it (A+ / A++ 1%, A 0.5%), at the main closes Mon–Thu'
+    : main.some(Boolean) ? `${Math.max(...main)}% at the main closes Mon–Thu${lateTxt}` : late.some(Boolean) ? lateTxt.slice(2) : g === 'C++' || g === 'C+' ? 'tracking only, no size' : 'skip';
+  return s + (main.some(Boolean) || late.some(Boolean) ? '. Weekends, ⛔ closes and EMA100 shorts get none.' : '');
+}
+const GRADE_DEF = { 'S++': 'An S+, or an A / A+ with 🐋 whale absorption, that’s also a ⭐ golden R:R in the ✨ golden zone (BTC pulled back from the NY session; it stands in for S’s BTC cool-off here). Sized as the A grade under it', S: 'An A or A+ with 🐋 Whale Absorption (funding against your side and the sweep candle’s selling, or buying, absorbed) while BTC’s 1h RSI has 🧊 cooled off (35–45). Sized as the A grade under it', 'S+': 'An A-grade setup that’s both a 💥 full swing failure (swept the swing candle’s wick) and a ⭐ golden R:R', 'A++': 'With the NY bias, outside the NY session, and BTC swept the same way', 'A+': 'With the NY bias, outside the NY session, 4h RSI stretched the trade’s way (no BTC sweep)', A: 'With the NY bias outside the session (or with a BTC sweep during it)', 'B+': 'A B whose 4h RSI is stretched the trade’s way (long under 40, short over 60)', B: 'With the NY bias, but during the NY session', 'C++': 'A C that fades a 2%+ NY session at its last close (NY fade): tracking only', 'C+': 'An A-grade setup whose candle engulfed the previous one (body or wick): a 🪜 ladder 70–90% back, tracking only', C: 'Against the NY bias' };
+
+// ---- projected win rate (projectWin in sfp.js) ----
+const MODEL_KEY = 'perp-dojo:win-model-v1';
+let savedModels = null;
+try { savedModels = JSON.parse(localStorage.getItem(MODEL_KEY) || 'null'); } catch {}
+// won (target or 🛡️ lock) / lost / null (open or never filled), with the adds or the first entry alone
+function wonOf(s, withAdds) {
+  const t = s.trade;
+  if (!t || t.missed || t.pending) return null;
+  const r = withAdds && t.scaled ? t.scaled.result : t.result;
+  return r === 'open' || r == null ? null : r === 'win' || r === 'lock';
+}
+const TAG_NAMES = { full: '💥 Full SFP', body: 'Body-only sweep', 'whale:absorbed': '🐋 Whale Absorption', 'whale:crowded': '⚠️ Crowded funding', grr: '⭐ Golden R:R', nypull: '✨ NY pullback', 'rsi:cool': '🧊 BTC RSI cooled off', 'rsi:chase': '⚠️ BTC RSI already ran', 'rsi:deep': '⚠️ BTC oversold / overbought', engulf: '🕯️ Engulf', away: '🕯️ Closed away', ema: '⚠️ Short above EMA100', 'trend:aligned': 'Aligned with BTC', 'trend:counter': 'Countertrend', 'trend:neutral': 'BTC neutral' };
+function projOf(s) {
+  const m = savedModels?.[adds.on ? 'adds' : 'first'];
+  return m ? projectWin(s, m) : null;
+}
+function projTip(pr) {
+  const m = savedModels?.[adds.on ? 'adds' : 'first'], pc = x => `${Math.round(x * 100)}%`, pts = x => `${x >= 0 ? '+' : '−'}${Math.abs(x).toFixed(0)} pts`;
+  const lines = [`Projected win rate ≈${pc(pr.p)}`, `• Grade ${pr.grade.g}: ${pc(pr.grade.p)} (${pr.grade.n} closed)`,
+    ...pr.parts.filter(q => Math.abs(q.pts) >= 0.5).map(q => `• ${TAG_NAMES[q.tag] || q.tag}: ${pts(q.pts)} (${q.n} closed)`)];
+  if (pr.combo) lines.push(`Exactly this grade + tags before: ${pr.combo.w} of ${pr.combo.n} won (${pc(pr.combo.w / pr.combo.n)})`);
+  lines.push('', `From ${m ? m.n.toLocaleString() : 'the'} closed signals of the past year, ${adds.on ? 'with the adds (a stop at entry or break-even isn’t a win)' : 'first entry only'}. Won = target or 🛡️ lock. Each tag’s effect is measured on top of its grade and pulled toward zero when the sample is small. A guide, not a promise.`);
+  return lines.join('\n');
+}
+const projChip = s => {
+  const pr = projOf(s); if (!pr) return null;
+  const c = el('span', 'sig-proj ' + (pr.p >= 0.3 ? 'hi' : pr.p >= 0.18 ? 'mid' : 'lo'), `≈${Math.round(pr.p * 100)}% win`);
+  c.title = projTip(pr);
+  return c;
+};
+
+// ---- each grade's, and each exact grade + tags', record over the past year (the chart guide's header) ----
+// Wrong-time setups are left out, as on the Signals page by default. Both modes: with the adds / first entry.
+const HIST_KEY = 'perp-dojo:signal-history-v1';
+let savedHist = null;
+try { savedHist = JSON.parse(localStorage.getItem(HIST_KEY) || 'null'); } catch {}
+const histKey = s => s.grade.grade + '|' + [...signalTags(s)].sort().join(',');
+function historyOf(signals) {
+  const h = { at: Date.now(), from: Infinity, adds: {}, first: {} };
+  for (const s of signals) {
+    if (!s.grade || wrongTime(s)) continue;
+    for (const mode of ['adds', 'first']) {
+      const o = outcomeIn(s.trade, mode === 'adds');
+      if (!o || o.result === 'open' || o.net == null) continue;
+      h.from = Math.min(h.from, s.t);
+      for (const k of ['g:' + s.grade.grade, histKey(s)]) {
+        const x = (h[mode][k] ||= { n: 0, w: 0, b: 0, sum: 0, top: [] });
+        x.n++; x.sum += o.net;
+        if (o.result === 'win' || o.result === 'lock') x.w++; else if (o.result === 'be') x.b++;
+        x.top.push(o.net); x.top.sort((a, b) => b - a); x.top.length = Math.min(3, x.top.length);
+      }
+    }
+  }
+  return h;
+}
+const histRow = (label, x, title) => {
+  if (!x) return { label, title, n: 0 };
+  const sum = a => a.reduce((n, v) => n + v, 0), wo3 = x.n > 3 ? (x.sum - sum(x.top)) / (x.n - 3) : null, avg = x.sum / x.n;
+  return { label, title, n: x.n, wins: x.w, bes: x.b, losses: x.n - x.w - x.b, avg, avgText: rText(avg), wo3, wo3Text: rText(wo3), thin: x.n < 10 };
+};
+hooks.history = s => {
+  if (!s.grade) return null;
+  const g = s.grade.grade, tags = signalTags(s), H = savedHist?.[adds.on ? 'adds' : 'first'];
+  const chips = [{ text: gradeLabel(g), cls: 'sig-grade ' + gradeKey(g), title: `Grade ${g}: ${GRADE_DEF[g] || ''}` },
+    ...tags.map(t => ({ text: TAG_NAMES[t] || t, cls: 'rg-tag' + (/^(ema|rsi:chase|rsi:deep|whale:crowded|trend:counter)$/.test(t) ? ' warn' : /^(whale:absorbed|grr|nypull|rsi:cool|full)$/.test(t) ? ' good' : '') }))];
+  const pr = projOf(s);
+  const proj = pr ? { text: `≈${Math.round(pr.p * 100)}% win projected`, cls: pr.p >= 0.3 ? 'hi' : pr.p >= 0.18 ? 'mid' : 'lo', title: projTip(pr) } : null;
+  if (!H) return { title: 'History', chips, proj, rows: [], note: 'Open the Signals tab on 180 days or more once to build this record.' };
+  const exact = H[histKey(s)], gr = H['g:' + g];
+  const days = Math.round((Date.now() - savedHist.from) / 86_400_000);
+  return {
+    title: `History · past ${days > 400 ? Math.round(days / 365) + ' years' : 'year'}`, chips, proj,
+    rows: [histRow('This grade + these tags', exact, 'Signals with exactly this grade and every one of these tags'), histRow(`All ${g}`, gr, `Every grade ${g} signal`)],
+    note: [`${adds.on ? 'With the adds' : 'First entry only'}, after fees, wrong-time setups left out. Won = target or 🛡️ lock.`,
+      exact && exact.n < 10 ? `Only ${exact.n} with exactly this combination: read it with the grade’s row.` : !exact ? 'No finished signal had exactly this combination.' : ''].filter(Boolean).join(' '),
+  };
+};
+
+// ⓘ what a setup is made of, in words: the grade and why, the size, every tag, the levels, the plan
+function setupInfo(s) {
+  const f = (tab.ctx || ctx_)?.fmt?.price || (x => String(x)), pc = x => `${(x * 100).toFixed(x < 0.01 ? 2 : 1)}%`;
+  const short = s.side === 'Short', L = [];
+  L.push(`${short ? '▼ Short' : '▲ Long'} ${coin(s.symbol)} · 4h close ${new Date(s.t + H4).toLocaleString(undefined, { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}`);
+  if (s.grade) {
+    L.push('', `Grade ${s.grade.grade}${s.grade.from ? ` (built on ${s.grade.from})` : ''}: ${s.grade.why}`);
+    const r = riskOf(s); if (r) L.push(`Size: ${r.pct ? `${r.pct}% risk` : 'no size'}, ${r.why}`);
+  } else L.push('', 'No grade: the NY bias couldn’t be read');
+  const lv = s.levels.map(l => f(l.price)).join(', ');
+  L.push('', `Swept: ${short ? 'swing high' : 'swing low'} level${s.levels.length > 1 ? 's' : ''} ${lv} (the swing candle’s body), wick ${pc(s.sweepPct)} past it, closed back inside`);
+  if (s.range?.pos != null) L.push(`Where: ${Math.round(s.range.pos * 100)}% up the last 7 days’ range`);
+  const tags = [];
+  tags.push(s.full ? '💥 Full swing failure: the wick also took the swing candle’s own wick' : 'Body-only sweep: the wick took the swing’s body, not its wick');
+  if (s.whale) tags.push(s.whale.text);
+  if (s.goldenRR) tags.push('⭐ Golden R:R: a 10–20R target within 10 ATR');
+  if (s.golden != null) tags.push(`✨ NY pullback: BTC gave back ${s.golden > 1 ? 'all' : Math.round(s.golden * 100) + '%'} of the last NY move`);
+  if (s.btcRsi) tags.push(s.btcRsi.text);
+  if (s.shape?.away) tags.push(`🕯️ ${s.shape.engulf ? (s.shape.engulf === 'wick' ? 'Wick engulf' : 'Body engulf') : 'Closed away'}: 🪜 5 limits 70–90% back (${(s.shape.ladder || [s.shape.limit]).map(f).join(', ')}) instead of the close${s.trade?.ladder ? `, ${s.trade.ladder.filled.length} of ${s.trade.ladder.prices.length} filled` : ''}`);
+  if (s.grade?.skip === 'ema') tags.push('⚠️ A short while BTC is above its 4h EMA100: no size');
+  if (s.trend) tags.push({ aligned: 'BTC 4h trend: aligned with the trade', counter: 'BTC 4h trend: against the trade (countertrend)', neutral: 'BTC 4h trend: neutral (within 1% of its EMA50)' }[s.trend]);
+  if (s.ny?.bias) tags.push(`NY bias: ${s.ny.bias}${s.ny.during ? ', NY session open' : ''}`);
+  L.push('', 'Tags:', ...tags.map(t => '• ' + t));
+  const t = s.trade;
+  if (t) L.push('', `Plan: entry ${f(t.entry)}${t.ladder ? ' (🪜 ladder average)' : t.limit ? ' (limit)' : ''} · stop ${f(t.sl)} (the wick) · target ${f(t.tp)} (the opposing level) · ${t.rr.toFixed(1)}R · ${pc(t.riskPct)} to the stop`);
+  const pr = projOf(s);
+  if (pr) L.push(`Projected win rate ≈${Math.round(pr.p * 100)}%${pr.combo ? ` · this exact grade + tags before: ${pr.combo.w} of ${pr.combo.n} won` : ''}`);
+  return L.join('\n');
+}
+const infoBtn = s => { const b = el('span', 'sig-info', 'i'); b.title = setupInfo(s); b.tabIndex = 0; b.setAttribute('aria-label', 'What this setup is made of'); return b; };
+
+// 🐋 order flow (funding settlements, Binance 4h taker volume) from `start`, cached; only the newest part is re-read
+async function flowFor(symbol, start) {
+  const key = `flow:${symbol}`;
+  let have = (await idbGet(key).catch(() => null)) || null;
+  if (have && (have.from > start || !have.taker)) have = null;
+  const from = have ? Math.max(start, Math.min(have.funding.at(-1)?.t ?? start, have.taker.at(-1)?.t ?? start) - 2 * DAY) : start;
+  const fresh = await ctx_.apiJson(`/api/flow?${new URLSearchParams({ symbol, start: from, end: Date.now() })}`);
+  const merge = (a = [], b = []) => [...new Map([...a, ...b].map(x => [x.t, x])).values()].sort((x, y) => x.t - y.t);
+  const all = { from: have?.from ?? start, funding: merge(have?.funding, fresh.funding), taker: merge(have?.taker, fresh.taker) };
+  idbSet(key, all).catch(() => {});
+  return all;
+}
+
 // ---- shared bits ----
 // A++ gets a gold star; the others a small letter
-const GRADES = ['S+', 'A+', 'A++', 'A', 'B+', 'C++', 'C+', 'B', 'C'];
+const GRADES = ['S++', 'S+', 'S', 'A+', 'A++', 'A', 'B+', 'C++', 'C+', 'B', 'C'];
 const gradeKey = g => 'g-' + g.toLowerCase().replace(/\+/g, 'plus');
-const gradeLabel = g => (g === 'A++' ? '★ A++' : g === 'S+' ? '👑 S+' : g === 'C+' ? '🕯️ C+' : g);
+const gradeLabel = g => (g === 'A++' ? '★ A++' : g === 'S++' ? '💎 S++' : g === 'S+' ? '👑 S+' : g === 'S' ? '🐋 S' : g === 'C+' ? '🕯️ C+' : g);
 const SETUPS_IN = { 'A++': ['🌃 Late A++'], A: ['🌙 Midnight sweep'], 'B+': ['🌊 NY fade'] };
 // As the alerts mark them: ⛔ a good grade at a close the plan skips
 // with more takeable setups than the plan takes (the best grade first, then the highest R:R).
-const GOOD = new Set(['S+', 'A++', 'A+', 'A', 'B+']);
+const GOOD = new Set(['S++', 'S+', 'S', 'A++', 'A+', 'A', 'B+']);
 const riskOf = s => (s.grade ? proposedRisk(s.grade.grade, s.t + H4, { tag: s.grade.tag, from: s.grade.from, skip: s.grade.skip }) : null);
 const wrongTime = s => Boolean(s.trade && s.grade && GOOD.has(s.grade.grade) && !s.grade.skip && riskOf(s).pct === 0);
 function markPicks(signals) {
@@ -182,8 +325,8 @@ function tradeCell(s, o, f) {
   if (!o || o.result !== 'open') bat.classList.add('still');      // only a trade that's still open gets the moving stripes
   bat.set(pos, false);
   const b = bestOf(s); if (b != null && b > Math.max(0, pos)) bat.ghost(b);
-  const line = el('small', 'muted', `${t.limit ? 'LO ' : ''}${f(t.entry)} · SL ${f(t.sl)} · TP ${f(t.tp)}`);
-  line.title = `${t.limit ? 'Limit entry (70% back) ' : 'Entry at the close '}${f(t.entry)} · stop ${f(t.sl)} · target ${f(t.tp)} · ${rr.toFixed(1)}R to the target on the first entry${withAdds ? `, ${withAdds.toFixed(1)}R if both adds fill` : ''}${t.limit ? ` · the candle closed at ${f(t.close)}` : ''}`;
+  const line = el('small', 'muted', `${t.ladder ? `🪜${t.ladder.filled.length || ''} ` : t.limit ? 'LO ' : ''}${f(t.entry)} · SL ${f(t.sl)} · TP ${f(t.tp)}`);
+  line.title = `${t.ladder ? `🪜 Ladder: 5 limits 70–90% back at ${t.ladder.prices.map(f).join(', ')}; ${t.ladder.filled.length} filled, averaging ` : t.limit ? 'Limit entry (70% back) ' : 'Entry at the close '}${f(t.entry)} · stop ${f(t.sl)} · target ${f(t.tp)} · ${rr.toFixed(1)}R to the target on the first entry${withAdds ? `, ${withAdds.toFixed(1)}R if both adds fill` : ''}${t.limit ? ` · the candle closed at ${f(t.close)}` : ''}`;
   td.append(bat, line);
   return td;
 }
@@ -192,7 +335,8 @@ const gradeChip = s => {
   if (!s.grade) return null;
   const g = s.grade.grade, name = setupOf(s), wt = wrongTime(s);
   const chip = el('span', 'sig-grade ' + gradeKey(g) + (wt ? ' wrong-time' : ''), gradeLabel(g) + (name ? ' ' + name.split(' ')[0] : '') + (wt ? ' ⛔' : ''));
-  chip.title = `Grade ${g}${name ? ` · ${name}` : ''}: ${s.grade.why}` + (wt ? '\n⛔ Wrong time: the plan skips this grade at this close' : '');
+  chip.title = (wt ? '⛔ Wrong time: the plan skips this grade at this close\n\n' : '') + setupInfo(s);
+  chip.style.cursor = 'help';
   return chip;
 };
 // ✨ BTC in golden zone / NY pullback (12:00 and 16:00 closes): tracking only
@@ -201,6 +345,13 @@ const fullChip = s => {
   if (!s.full) return null;
   const c = el('span', 'sig-full', '💥 Full SFP');
   c.title = 'Full swing failure: the wick ran past the swing candle’s own wick, not just its body, taking the stops beyond the visible extreme.\nOver 5 years, A grades like this (at plan times, EMA100 shorts left out) were positive in every year: +0.55R a trade on 515.';
+  return c;
+};
+// 🐋 Whale Absorption (or ⚠️ crowded): funding + taker flow on the signal candle, tracking only
+const whaleChip = s => {
+  if (!s.whale) return null;
+  const c = el('span', 'sig-whale ' + s.whale.kind, s.whale.kind === 'absorbed' ? '🐋 Whale Absorption' : '⚠️ Crowded');
+  c.title = s.whale.text + '\n\n' + WHALE_TIP;
   return c;
 };
 // ⭐ Golden R:R: an A grade with a 10–20R target (from the close) within 10 ATR: tracking only
@@ -227,7 +378,7 @@ const btcRsiChip = s => {
 const shapeChip = s => {
   const sh = s.shape; if (!sh?.away || !s.trade) return null;
   const c = el('span', 'sig-shape' + (sh.engulf ? ' ' + sh.engulf : ''), sh.engulf === 'wick' ? '🕯️ Wick engulf' : sh.engulf === 'body' ? '🕯️ Body engulf' : '🕯️ Away');
-  c.title = `${sh.engulf === 'wick' ? 'Closed past the previous candle’s wick. ' : sh.engulf === 'body' ? 'Closed past the previous candle’s body, not its wick. ' : ''}The candle already closed the trade’s way, far from the level: a limit at ${(tab.ctx || ctx_).fmt.price(sh.limit)} (70% back toward the wick) instead of chasing the close. Tracking only.`;
+  c.title = `${sh.engulf === 'wick' ? 'Closed past the previous candle’s wick. ' : sh.engulf === 'body' ? 'Closed past the previous candle’s body, not its wick. ' : ''}The candle already closed the trade’s way, far from the level: a 🪜 ladder of 5 limits 70–90% back toward the wick (${(sh.ladder || [sh.limit]).map(x => (tab.ctx || ctx_).fmt.price(x)).join(', ')}), each a fifth of the risk, instead of chasing the close. Tracking only.`;
   return c;
 };
 // ⚠️ a short while BTC is above its 4h EMA100: the plan skips it
@@ -241,10 +392,26 @@ const pctS = v => (v === null || v === undefined || !Number.isFinite(v) ? '—' 
 const cls = v => (v > 0 ? 'pos' : v < 0 ? 'neg' : '');
 const coin = s => s.replace(/USDT$/, '');
 const rText = v => (v === null || v === undefined || !Number.isFinite(v) ? '—' : `${v > 0 ? '+' : v < 0 ? '−' : ''}${Math.abs(v).toFixed(2)}R`);
-// Bybit's standard fees, in R: a market entry at the close, a limit order at the
-// target, a stop-market at the stop. Tight stops make fees a big share of 1R.
+// The R:R to show. A closed trade that reached the target and went out on the trail shows the R:R the trail
+// got on the first entry instead of the target's (still in its tooltip); every other trade shows the target's.
+export function rrShown(t) {
+  if (t?.trail && t.result === 'win' && Number.isFinite(t.R)) return { v: t.R, tp: t.rr, trailed: true };
+  return { v: t?.rr ?? null, tp: t?.rr ?? null, trailed: false };
+}
+// "9.1R ↗": a trailed one, past its target (↗) or let go before it (↘); its tooltip says both
+export function rrEl(tag, cls, t) {
+  const r = rrShown(t), e = document.createElement(tag);
+  e.className = cls + (r.trailed ? ' rr-trail ' + (r.v >= r.tp ? 'up' : 'down') : '');
+  e.textContent = r.v == null ? '—' : `${r.v.toFixed(1)}R${r.trailed ? (r.v >= r.tp ? ' ↗' : ' ↘') : ''}`;
+  e.title = r.v == null ? '' : r.trailed
+    ? `🏁 Trailed: the target was ${r.tp.toFixed(1)}R; the trail past it got out at ${r.v.toFixed(1)}R on the first entry (${r.v >= r.tp ? '+' : '−'}${Math.abs(r.v - r.tp).toFixed(1)}R ${r.v >= r.tp ? 'more' : 'less'} than closing at the target)`
+    : `${r.v.toFixed(1)}R to the target on the first entry`;
+  return e;
+}
+// Bybit's standard fees, in R: a market entry at the close, a stop-market at the stop and on the trail
+// past the target (a limit at a fixed target). Tight stops make fees a big share of 1R.
 const TAKER = 0.00055, MAKER = 0.0002;
-const afterFees = t => t.R - (TAKER + (t.result === 'win' ? MAKER : TAKER)) / t.riskPct;
+const afterFees = t => t.net ?? t.R - (TAKER + (t.result === 'win' && !t.trail ? MAKER : TAKER)) / t.riskPct;
 // 4h candles close on the hour, so no minutes: "Nov 3, 8 PM"
 const closeTime = t => new Date(t + H4).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric' });
 const ago = t => { const h = (Date.now() - (t + H4)) / 3_600_000; return h < 1 ? 'just now' : h < 48 ? `${Math.round(h)}h ago` : `${Math.round(h / 24)}d ago`; };
@@ -256,12 +423,12 @@ const result = s => {
   if (s.trade?.pending) return { label: 'LO pending', v: null };
   const o = outcomeOf(s.trade);
   if (!o) return { label: 'no target', v: null };
-  if (o.result === 'win') return { label: 'target hit', v: o.R };
+  if (o.result === 'win') return { label: o.trail ? 'TP → trailed' : 'target hit', v: o.R };
   if (o.result === 'loss') return { label: 'stopped', v: o.R };
   if (o.result === 'entry') return { label: 'stopped at entry', v: o.R };
   if (o.result === 'be') return { label: 'break-even stop', v: o.R };
   if (o.result === 'lock') return { label: '🛡️ locked +3R', v: o.R };
-  return { label: o.exitT === null && o.R === 0 ? 'new' : 'open', v: o.R === 0 ? null : o.R };
+  return { label: o.exitT === null && o.R === 0 ? 'new' : o.trailing ? 'trailing' : 'open', v: o.R === 0 ? null : o.R };
 };
 const open = (s, list) => showOnChart(s, list);
 
@@ -288,7 +455,7 @@ function liveR(s) {
 function pricePos(s) {
   const t = s.trade, o = outcomeOf(t);
   if (!t || !o) return 0;
-  if (o.result === 'win') return t.rr;
+  if (o.result === 'win') return o.trail && t.trail ? t.R : t.rr;              // out on the trail: where it let go
   if (o.result === 'loss') return -1;
   if (o.result === 'entry' || o.result === 'be') return 0;
   if (o.result === 'lock') return FAR_LOCK.to;
@@ -323,12 +490,21 @@ export async function renderSignalsWidget(ctx) {
     if (s.btcRsi) { const r = el('span', 'sig-pill ' + (s.btcRsi.kind === 'cool' ? 'cool' : 'warn'), 'RSI'); r.title = s.btcRsi.text; top.append(r); }
     if (fullChip(s)) { const k = el('span', 'sig-pill full', '💥'); k.title = fullChip(s).title; top.append(k); }
     if (goldenRRChip(s)) { const k = el('span', 'sig-pill gold', '⭐'); k.title = goldenRRChip(s).title; top.append(k); }
+    { const pc = projChip(s); if (pc) { const k = el('span', 'sig-pill proj ' + pc.className.split(' ').pop(), pc.textContent.replace('≈', '').replace(' win', '')); k.title = pc.title; top.append(k); } }
+    if (whaleChip(s)) { const k = el('span', 'sig-pill ' + (s.whale.kind === 'absorbed' ? 'whale' : 'warn'), s.whale.kind === 'absorbed' ? '🐋' : '⚠️ $'); k.title = whaleChip(s).title; top.append(k); }
     if (emaChip(s)) { const k = el('span', 'sig-pill warn', 'EMA'); k.title = emaChip(s).title; top.append(k); }
     if (shapeChip(s)) { const k = el('span', 'sig-pill candle', '🕯️'); k.title = shapeChip(s).title; top.append(k); }
     const tc = trendChip(s); tc.classList.add('sig-trend-top'); tc.title = `BTC’s 4h trend: ${tc.textContent}`; tc.textContent = { aligned: 'Aligned', counter: 'Counter', neutral: 'Neutral' }[s.trend] || 'BTC ?'; top.append(tc);
+    // the grade stays left; the tags sit in their own group on the right, and a second line hugs the right edge too
+    const tagBox = el('div', 'sig-top-tags'); tagBox.append(...[...top.children].slice(1)); top.append(tagBox);
     const name = el('div', 'sig-coin ' + (short ? 'neg' : 'pos'));
     name.append(el('b', '', `${short ? '▼' : '▲'} ${coin(s.symbol)}`));
-    if (s.trade) { const t = el('span', 'sig-target'); t.append(el('i', '', '🎯'), `${s.trade.rr.toFixed(1)}R`); t.title = `Target: the opposing level, ${s.trade.rr.toFixed(1)}R from the entry`; name.append(t); }
+    if (s.trade) {
+      const t = el('span', 'sig-target'), r = rrEl('span', '', s.trade);
+      t.append(el('i', '', rrShown(s.trade).trailed ? '🏁' : '🎯'), r);
+      t.title = rrShown(s.trade).trailed ? r.title : `Target: the opposing level, ${s.trade.rr.toFixed(1)}R from the entry. Once it’s touched the stop trails each closed 4h candle`;
+      name.append(t);
+    }
     const mid = el('div', 'sig-mid');
     mid.append(el('span', 'sig-res ' + cls(res.v), res.v === null ? '—' : rText(res.v)), el('span', 'muted small', `${short ? 'short' : 'long'} · ${res.label}`));
     // still open (or inside its first 4h candle): R from the live price, not the last 4h close
@@ -364,18 +540,19 @@ export async function renderSignalsWidget(ctx) {
 }
 
 // ---- Signals tab ----
-const tab = { days: 365, pair: 'all', side: 'all', trend: 'all', golden: 'all', rsi: 'all', shape: 'all', setup: 'all', ema: 'all', grr: 'all', full: 'all', noWrong: false, noBE: false, grades: new Set(GRADES), sort: { key: 't', dir: -1 }, shown: 100, wired: false, data: null, busy: false };
+const tab = { days: 365, pair: 'all', side: 'all', trend: 'all', golden: 'all', rsi: 'all', shape: 'all', setup: 'all', ema: 'all', grr: 'all', full: 'all', whale: 'all', status: 'all', noWrong: false, noBE: false, grades: new Set(GRADES), sort: { key: 't', dir: -1 }, shown: 100, wired: false, data: null, busy: false };
 const GRADE_KEY = 'perp-dojo:signal-grades';
 // B+ and C++ came later: a saved choice from before them shows each wherever B (or C) was ticked
 try {
   const g = JSON.parse(localStorage.getItem(GRADE_KEY) || 'null');
   // v4: the old A+ is now A++, and the new A+ was part of A: keep each tick where it was
   const v4 = !Array.isArray(g) || g.includes('v4') ? [] : [...(g.includes('A+') ? ['A++'] : []), ...(g.includes('A') ? ['A+'] : [])];
-  if (Array.isArray(g)) tab.grades = new Set([...g.map(x => (x === 'C+' && !g.includes('v6') ? 'C++' : x)), ...v4, ...(g.includes('v5') ? [] : ['S']), ...(g.includes('v7') ? [] : ['C+']), ...(g.includes('v8') ? [] : ['S+']), ...(g.includes('B') && !g.includes('v2') && !g.includes('v3') && !g.includes('v4') ? ['B+'] : []), ...(g.includes('C') && !g.includes('v3') && !g.includes('v4') ? ['C++'] : [])].filter(x => GRADES.includes(x)));
+  if (Array.isArray(g)) tab.grades = new Set([...g.map(x => (x === 'C+' && !g.includes('v6') ? 'C++' : x)), ...v4, ...(g.includes('v5') ? [] : ['S']), ...(g.includes('v7') ? [] : ['C+']), ...(g.includes('v9') ? [] : ['S']), ...(g.includes('v10') ? [] : ['S++']), ...(g.includes('v8') ? [] : ['S+']), ...(g.includes('B') && !g.includes('v2') && !g.includes('v3') && !g.includes('v4') ? ['B+'] : []), ...(g.includes('C') && !g.includes('v3') && !g.includes('v4') ? ['C++'] : [])].filter(x => GRADES.includes(x)));
 } catch {}
 // a signal without a grade (the NY bias couldn't be read) shows only when every grade is ticked
-const WRONG_KEY = 'perp-dojo:sig-hide-wrong-time';
-try { tab.noWrong = localStorage.getItem(WRONG_KEY) === '1'; } catch {}
+const WRONG_KEY = 'perp-dojo:sig-hide-wrong-time-v2';
+tab.noWrong = true;                                      // wrong-time signals hidden unless you show them
+try { const v = localStorage.getItem(WRONG_KEY); if (v !== null) tab.noWrong = v === '1'; } catch {}
 const gradeOk = s => (s.grade ? tab.grades.has(s.grade.grade) : tab.grades.size === GRADES.length);
 
 export function renderSignalsView(ctx) {
@@ -387,19 +564,30 @@ export function renderSignalsView(ctx) {
     $('#sigRefresh').onclick = () => { held = null; load(ctx); };
     $('#sigMode').value = adds.on ? 'adds' : 'first';
     $('#sigMode').onchange = e => { setAdds(e.target.value === 'adds'); paint(); };
-    for (const [id, k] of [['#sigPair', 'pair'], ['#sigSide', 'side'], ['#sigTrendF', 'trend'], ['#sigGoldF', 'golden'], ['#sigRsiF', 'rsi'], ['#sigShapeF', 'shape'], ['#sigSetupF', 'setup'], ['#sigEmaF', 'ema'], ['#sigGrrF', 'grr'], ['#sigFullF', 'full']])
+    for (const [id, k] of [['#sigPair', 'pair'], ['#sigSide', 'side'], ['#sigTrendF', 'trend'], ['#sigGoldF', 'golden'], ['#sigRsiF', 'rsi'], ['#sigShapeF', 'shape'], ['#sigSetupF', 'setup'], ['#sigEmaF', 'ema'], ['#sigGrrF', 'grr'], ['#sigFullF', 'full'], ['#sigWhaleF', 'whale'], ['#sigStatusF', 'status']])
       $(id).onchange = e => { tab[k] = e.target.value; tab.shown = 100; paint(); };
-    $('#sigGradeF').replaceChildren(...GRADES.map(g => {
+    const saveGrades = () => { try { localStorage.setItem(GRADE_KEY, JSON.stringify([...tab.grades, 'v4', 'v5', 'v6', 'v7', 'v8', 'v9', 'v10'])); } catch {} };
+    // one button ticks every grade, or clears them all when they're all ticked
+    const allBtn = el('button', 'grade-all'); allBtn.type = 'button';
+    const syncAll = () => { const all = tab.grades.size === GRADES.length; allBtn.textContent = all ? 'None' : 'All'; allBtn.title = all ? 'Untick every grade' : 'Tick every grade'; };
+    allBtn.onclick = () => {
+      const on = tab.grades.size !== GRADES.length;
+      tab.grades = new Set(on ? GRADES : []);
+      for (const b of $('#sigGradeF').querySelectorAll('input[type=checkbox]')) b.checked = on;
+      saveGrades(); syncAll(); tab.shown = 100; paint();
+    };
+    $('#sigGradeF').replaceChildren(allBtn, ...GRADES.map(g => {
       const lab = el('label', 'grade-check'), box = el('input'); box.type = 'checkbox'; box.value = g; box.checked = tab.grades.has(g);
       box.onchange = () => {
         box.checked ? tab.grades.add(g) : tab.grades.delete(g);
-        try { localStorage.setItem(GRADE_KEY, JSON.stringify([...tab.grades, 'v4', 'v5', 'v6', 'v7', 'v8'])); } catch {}
+        saveGrades(); syncAll();
         tab.shown = 100; paint();
       };
       lab.append(box, el('span', 'sig-grade ' + gradeKey(g), gradeLabel(g)));
-      lab.title = { 'S+': 'An A-grade setup that’s both a 💥 full swing failure (swept the swing candle’s wick) and a ⭐ golden R:R', 'A++': 'With the NY bias, outside the NY session, and BTC swept the same way', 'A+': 'With the NY bias, outside the NY session, 4h RSI stretched the trade’s way (no BTC sweep)', A: 'With the NY bias outside the session (or with a BTC sweep during it)', 'B+': 'A B whose 4h RSI is stretched the trade’s way (long under 40, short over 60)', B: 'With the NY bias, but during the NY session', 'C++': 'A C that fades a 2%+ NY session at its last close (NY fade): tracking only', 'C+': 'An A-grade setup whose candle engulfed the previous one (body or wick): a limit 70% back, tracking only', C: 'Against the NY bias' }[g];
+      lab.title = GRADE_DEF[g];
       return lab;
     }));
+    syncAll();
     // ⛔ wrong time: a good grade at a close the plan skips
     const wl = el('label', 'grade-check wrong-check'), wb = el('input'); wb.type = 'checkbox'; wb.checked = tab.noWrong;
     wb.onchange = () => { tab.noWrong = wb.checked; try { localStorage.setItem(WRONG_KEY, wb.checked ? '1' : '0'); } catch {} tab.shown = 100; paint(); };
@@ -410,18 +598,13 @@ export function renderSignalsView(ctx) {
     bb.onchange = () => { tab.noBE = bb.checked; tab.shown = 100; paint(); };
     bl.append(bb, el('span', '', 'Hide B/E trades')); bl.title = 'Leave out trades stopped at break-even after both adds (with the adds on; a single entry never ends at B/E)';
     wl.after(bl);
-    // the less-used filters live in a popover; what's set shows as chips beside it
     const btn = $('#sigFiltBtn'), panel = $('#sigFiltPanel');
-    const setOpen = on => { panel.hidden = !on; btn.setAttribute('aria-expanded', String(on)); };
-    btn.onclick = () => setOpen(panel.hidden);
-    document.addEventListener('pointerdown', e => { if (!panel.hidden && !e.target.closest('.sig-more')) setOpen(false); });
-    panel.addEventListener('keydown', e => { if (e.key === 'Escape') { setOpen(false); btn.focus(); } });
     $('#sigFiltReset').onclick = () => { for (const f of FILTERS) f.clear(); tab.shown = 100; paint(); };
     // The filters as rows of pills, always in view: each dropdown's options become pills (click one to
     // use it, again to clear it), the two checkboxes become toggles. The dropdowns stay underneath, hidden,
     // so everything else (the chips' clear, saved state) works as before. The pair list stays a dropdown.
     const bar = panel; bar.hidden = false; bar.className = 'sig-pillbar'; bar.removeAttribute('role');
-    btn.closest('.sig-more').replaceWith(...[]); $('#sigFiltChips').hidden = true;
+    btn.closest('.sig-more').replaceWith(...[]);
     $('#sigView').before(bar);
     for (const lab of [...bar.querySelectorAll(':scope > label')]) {
       const sel = lab.querySelector('select'), name = lab.querySelector('span')?.textContent || '';
@@ -441,6 +624,19 @@ export function renderSignalsView(ctx) {
       pb.onclick = () => box.click(); pb._box = box; tg.append(pb); lab.hidden = true; tg.append(lab);
     }
     $('#sigFiltReset').before(tg);
+    const box = (name, ids) => { const b = el('div', 'sig-fbox'); b.append(el('div', 'sig-fbox-n', name)); const body = el('div', 'sig-fbox-b'); b.append(body);
+      for (const id of ids) { const g = id === 'hide' ? tg : bar.querySelector('#' + id)?.closest('.sig-pg'); if (g) { const lbl = g.querySelector('.sig-pg-n'); if (lbl) lbl.textContent = { sigPair: 'Pair', sigSide: 'Side', sigStatusF: 'Status', sigMode: 'Results', sigTrendF: 'Trend', sigRsiF: '1h RSI', sigEmaF: 'EMA100', sigGoldF: 'NY pullback', sigSetupF: 'Setup', sigFullF: 'Sweep', sigWhaleF: 'Whale', sigShapeF: 'Candle', sigGrrF: 'R:R', hide: 'Hide' }[id] ?? lbl.textContent; body.append(g); } }
+      return b; };
+    const reset = $('#sigFiltReset');
+    bar.replaceChildren(box('Trade', ['sigPair', 'sigSide', 'sigStatusF', 'sigMode']), box('BTC', ['sigTrendF', 'sigRsiF', 'sigEmaF', 'sigGoldF']), box('Setup', ['sigSetupF', 'sigFullF', 'sigWhaleF', 'sigShapeF', 'sigGrrF']), box('Hide', ['hide']), reset);
+    // collapse / expand: collapsed, only the filters in use show, as chips (click one to clear it). Remembered.
+    const FKEY = 'perp-dojo:sig-filters-collapsed', head = el('div', 'sig-fhead'), tog = el('button', 'sig-ftoggle'); tog.type = 'button';
+    const chips = $('#sigFiltChips'); chips.hidden = false;
+    head.append(tog, chips); bar.before(head);
+    const setCollapsed = on => { bar.hidden = on; head.classList.toggle('collapsed', on); tog.setAttribute('aria-expanded', String(!on)); tog.innerHTML = `<i>${on ? '▸' : '▾'}</i> Filters`; try { localStorage.setItem(FKEY, on ? '1' : '0'); } catch {} };
+    tog.onclick = () => setCollapsed(!bar.hidden);
+    let fc = false; try { fc = localStorage.getItem(FKEY) === '1'; } catch {}
+    setCollapsed(fc);
     const pf = $('#sigPair');
     pf.replaceChildren(el('option', '', 'All pairs'), ...PAIRS.map(p => { const o = el('option', '', coin(p)); o.value = p; return o; }));
     pf.firstChild.value = 'all';
@@ -519,7 +715,7 @@ const SORT_KEYS = {
   symbol: { label: ['pair A–Z', 'pair Z–A'], first: 1, val: s => s.symbol },
   side: { label: ['longs first', 'shorts first'], first: 1, val: s => s.side },
   grade: { label: ['lowest grade first', 'best grade first'], first: -1, val: s => (s.grade ? GRADES.length - GRADES.indexOf(s.grade.grade) : null) },
-  rr: { label: ['lowest R:R first', 'highest R:R first'], first: -1, val: s => s.trade?.rr ?? null },
+  rr: { label: ['lowest R:R first', 'highest R:R first'], first: -1, val: s => rrShown(s.trade).v },
   trend: { label: ['countertrend first', 'aligned with BTC first'], first: -1, val: s => TREND_RANK[s.trend] ?? null },
   held: { label: ['shortest hold first', 'longest hold first'], first: -1, val: heldOf },
   best: { label: ['lowest best R first', 'highest best R first'], first: -1, val: bestOf },
@@ -542,7 +738,7 @@ const sortLabel = () => SORT_KEYS[tab.sort.key].label[tab.sort.dir > 0 ? 0 : 1];
 // each filter in the popover: what it shows as a chip when set, and how to clear it
 const selFilter = (id, k) => ({ on: () => tab[k] !== 'all', text: () => $(id).selectedOptions[0]?.textContent, clear: () => { tab[k] = 'all'; $(id).value = 'all'; } });
 const FILTERS = [
-  selFilter('#sigPair', 'pair'), selFilter('#sigSide', 'side'), selFilter('#sigTrendF', 'trend'), selFilter('#sigGoldF', 'golden'), selFilter('#sigRsiF', 'rsi'), selFilter('#sigShapeF', 'shape'), selFilter('#sigSetupF', 'setup'), selFilter('#sigEmaF', 'ema'), selFilter('#sigGrrF', 'grr'), selFilter('#sigFullF', 'full'),
+  selFilter('#sigPair', 'pair'), selFilter('#sigSide', 'side'), selFilter('#sigTrendF', 'trend'), selFilter('#sigGoldF', 'golden'), selFilter('#sigRsiF', 'rsi'), selFilter('#sigShapeF', 'shape'), selFilter('#sigSetupF', 'setup'), selFilter('#sigEmaF', 'ema'), selFilter('#sigGrrF', 'grr'), selFilter('#sigFullF', 'full'), selFilter('#sigWhaleF', 'whale'), selFilter('#sigStatusF', 'status'),
   { on: () => tab.noWrong, text: () => 'No ⛔ wrong time', clear: () => { tab.noWrong = false; $('.wrong-check input').checked = false; try { localStorage.setItem(WRONG_KEY, '0'); } catch {} } },
   { on: () => tab.noBE, text: () => 'No B/E', clear: () => { tab.noBE = false; $('.be-check input').checked = false; } },
   { on: () => !adds.on, text: () => 'First entry only', clear: () => { setAdds(true); $('#sigMode').value = 'adds'; } },
@@ -555,6 +751,8 @@ const shapeOk = s => {
   return f === 'at' ? !sh.away : f === 'away' ? sh.away : f === 'plain' ? sh.away && !sh.engulf : f === 'engulf' ? Boolean(sh.engulf) : sh.engulf === f;
 };
 // which filter pills are on: a pill matches its dropdown's value, a toggle its checkbox
+// still running: an open trade, or a limit still waiting to fill
+const isLive = s => Boolean(s.trade && !s.trade.missed && (s.trade.pending || outcomeOf(s.trade)?.result === 'open'));
 function syncPills() {
   for (const pb of document.querySelectorAll('.sig-fpill')) {
     const on = pb._box ? pb._box.checked : $('#' + pb.dataset.sel)?.value === pb.dataset.v;
@@ -564,7 +762,7 @@ function syncPills() {
 function paintChips() {
   const set = FILTERS.filter(f => f.on());
   const n = $('#sigFiltN'); if (n) { n.hidden = !set.length; n.textContent = set.length; }
-  $('#sigFiltChips')?.replaceChildren(...set.map(f => {
+  $('#sigFiltChips')?.replaceChildren(...(set.length ? [] : [el('span', 'muted small', 'No filters on')]), ...set.map(f => {
     const c = el('button', 'sig-filt-chip'); c.type = 'button'; c.title = 'Remove this filter';
     c.append(f.text(), el('i', '', '×'));
     c.onclick = () => { f.clear(); tab.shown = 100; paint(); };
@@ -576,7 +774,7 @@ function paint() {
   paintChips();
   syncPills();
   const all = tab.data.signals;
-  const base = all.filter(s => (tab.pair === 'all' || s.symbol === tab.pair) && (tab.side === 'all' || s.side === tab.side) && (tab.trend === 'all' || s.trend === tab.trend) && (tab.golden === 'all' || (s.golden != null) === (tab.golden === 'in')) && rsiOk(s) && shapeOk(s) && (tab.setup === 'all' || (setupOf(s) ?? 'none') === tab.setup) && (tab.full === 'all' || Boolean(s.full) === (tab.full === 'full')) && (tab.grr === 'all' || Boolean(s.goldenRR) === (tab.grr === 'in')) && (tab.ema === 'all' || (s.grade?.skip === 'ema') === (tab.ema === 'only')) && !(tab.noWrong && wrongTime(s)) && !(tab.noBE && outcomeOf(s.trade)?.result === 'be'));
+  const base = all.filter(s => (tab.pair === 'all' || s.symbol === tab.pair) && (tab.side === 'all' || s.side === tab.side) && (tab.trend === 'all' || s.trend === tab.trend) && (tab.golden === 'all' || (s.golden != null) === (tab.golden === 'in')) && rsiOk(s) && shapeOk(s) && (tab.setup === 'all' || (setupOf(s) ?? 'none') === tab.setup) && (tab.status === 'all' || isLive(s) === (tab.status === 'open')) && (tab.full === 'all' || Boolean(s.full) === (tab.full === 'full')) && (tab.whale === 'all' || (tab.whale === 'none' ? !s.whale : s.whale?.kind === tab.whale)) && (tab.grr === 'all' || Boolean(s.goldenRR) === (tab.grr === 'in')) && (tab.ema === 'all' || (s.grade?.skip === 'ema') === (tab.ema === 'only')) && !(tab.noWrong && wrongTime(s)) && !(tab.noBE && outcomeOf(s.trade)?.result === 'be'));
   const list = sortSignals(base.filter(gradeOk));
 
   const perDay = list.length ? list.length / tab.days : 0;
@@ -592,8 +790,11 @@ function paint() {
     const d = el('div', 'sig-gstat');
     const val = el('b', 'sig-gstat-r ' + (st.net == null ? 'muted' : cls(st.net)), st.net == null ? '—' : rText(st.net));
     const sub = el('small', 'sig-gstat-v' + (tags.length && enough ? ' best' : losing ? ' bad' : ''),
-      !st.done ? 'no trades' : !enough ? `${st.done} trade${st.done === 1 ? '' : 's'}` : tags.length ? tags.join(' · ') : losing ? 'Inconsistent' : `${Math.round(st.win * 100)}% won · ${st.done}`);
-    d.append(el('span', 'sig-grade ' + gradeKey(g), gradeLabel(g)), val, sub);
+      !st.done ? 'no trades' : !enough ? `${Math.round(st.win * 100)}% won` : tags.length ? tags.join(' · ') : losing ? 'Inconsistent' : `${Math.round(st.win * 100)}% won`);
+    const count = el('small', 'sig-gstat-n', st.done ? `${st.done.toLocaleString()} trade${st.done === 1 ? '' : 's'}` : '');
+    const chip = el('span', 'sig-grade ' + gradeKey(g), gradeLabel(g));
+    chip.title = `Grade ${g}: ${GRADE_DEF[g] || ''}` + `\n\nSize: ${sizeNote(g)}`;
+    d.append(chip, val, sub, count);
     d.title = st.done ? `Grade ${g}: ${st.done.toLocaleString()} trades · ${st.wins} won (${Math.round(st.win * 100)}%) · ${st.losses} lost${st.bes ? ` · ${st.bes} B/E` : ''} · ${rText(st.net)} a trade after fees · ${rText(st.total).replace(/\.\d+R/, 'R')} total` : `Grade ${g}: no finished trades here`;
     return d;
   }));
@@ -609,7 +810,18 @@ function paint() {
     stat('Profit factor', v.pf === null ? '—' : v.pf.toFixed(2), v.pf === null ? '' : v.pf >= 1 ? 'pos' : 'neg', 'What the winners made ÷ what the losers lost, after fees'),
     stat('Avg win / loss', v.avgWin === null ? '—' : `${rText(v.avgWin).replace('R', '')} / ${v.avgLoss === null ? '—' : rText(v.avgLoss)}`, '', 'The average winning and losing trade, after fees'),
     stat('Avg hold', v.hold === null ? '—' : fmtDuration(v.hold)),
-  ] : [el('p', 'muted small', list.length ? 'No finished trades in this view yet.' : 'No signals match these filters.')]));
+  ] : [(() => {
+    // nothing shown: if the grade ticks are what's hiding them, say which grades they're in, with a click to show them
+    if (list.length) return el('p', 'muted small', 'No finished trades in this view yet.');
+    const hid = base.filter(s => s.grade && !tab.grades.has(s.grade.grade));
+    if (!hid.length) return el('p', 'muted small', 'No signals match these filters.');
+    const by = [...new Set(hid.map(s => s.grade.grade))].sort((a, b) => GRADES.indexOf(a) - GRADES.indexOf(b));
+    const p = el('p', 'muted small sig-hidden-note');
+    p.append(`No signals in the ticked grades. ${hid.length.toLocaleString()} match these filters in unticked grades: `);
+    for (const g of by) { const b = el('button', 'sig-grade ' + gradeKey(g), `${gradeLabel(g)} · ${hid.filter(s => s.grade.grade === g).length}`); b.type = 'button'; b.title = `Tick ${g}`; b.onclick = () => $(`#sigGradeF input[value="${g}"]`)?.click(); p.append(b, ' '); }
+    if (by.includes('C+')) p.append(' (an A grade whose candle engulfed is graded 🕯️ C+)');
+    return p;
+  })()]));
   $('#sigCount').textContent = `${list.length.toLocaleString()} signal${list.length === 1 ? '' : 's'} · about ${perDay.toFixed(1)} a day · ${sortLabel()}`;
 
   const t = $('#sigTable'); t.replaceChildren();
@@ -627,8 +839,8 @@ function paint() {
   for (const s of list.slice(0, tab.shown)) {
     const tr = el('tr', 'replayable'); tr.tabIndex = 0; tr.title = 'Show on the 4h chart';
     const tc = el('td'); tc.append(trendChip(s));
-    const gc = el('td'), chips = [gradeChip(s), fullChip(s), goldenRRChip(s), goldenChip(s), btcRsiChip(s), shapeChip(s), emaChip(s)].filter(Boolean);
-    if (chips.length) { const w = el('div', 'sig-chips'); w.append(...chips); gc.append(w); } else gc.textContent = '—';
+    const gc = el('td'), chips = [gradeChip(s), projChip(s), fullChip(s), whaleChip(s), goldenRRChip(s), goldenChip(s), btcRsiChip(s), shapeChip(s), emaChip(s)].filter(Boolean);
+    { const w = el('div', 'sig-chips'); w.append(...chips); gc.append(w); }
     const t = s.trade, f = tab.ctx.fmt.price;
     const o = outcomeOf(t), done = o && o.result !== 'open';
     const hv = heldOf(s), held = el('td', 'num' + (done ? '' : ' muted'), hv == null ? '—' : fmtDuration(hv));
@@ -640,8 +852,11 @@ function paint() {
       tradeCell(s, o, f), tc,
       held,
       (() => { const v = bestOf(s), td = el('td', 'num' + (v == null ? '' : v >= 1 ? ' pos' : ' muted'), v == null ? '' : `+${v.toFixed(1)}R`); if (v != null) td.title = 'The furthest it went in your favour before it ended, in R of the first entry'; return td; })(),
-      (() => { const t0 = s.trade, w = adds.on && o?.rr && t0 && o.rr > t0.rr + 0.05 ? o.rr : null, td = el('td', 'num', t0 ? `${t0.rr.toFixed(1)}R` : '—');
-        if (t0) td.title = `${t0.rr.toFixed(1)}R to the target on the first entry${w ? `, ${w.toFixed(1)}R if both adds fill` : ''}`; return td; })(),
+      (() => { const t0 = s.trade; if (!t0) return el('td', 'num', '—');
+        const td = rrEl('td', 'num', t0), w = adds.on && o?.rr && o.rr > t0.rr + 0.05 ? o.rr : null;
+        if (rrShown(t0).trailed) { if (adds.on && o?.trail && o.adds) td.title += `; ${rText(o.R)} with the adds`; }
+        else if (w) td.title += `, ${w.toFixed(1)}R if both adds fill`;
+        return td; })(),
       (() => { const td = el('td', 'num sig-res-c ' + (done ? cls(o.R) : '')); td.append(el('span', '', res)); if (done) { const n = el('small', cls(o.net), `${rText(o.net)} after fees`); td.append(n); } return td; })(),
     );
     const go = () => open(s, list);

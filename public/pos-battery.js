@@ -31,7 +31,7 @@ export function batteryBody(p, plan = null) {
   const tpR = r.tpR ?? Math.max(3, Math.ceil(r.now) + 1), n = Math.max(1, Math.ceil(tpR));
   // the line above: R now of the target, and the adds as chips
   const line = el('div', 'bat-line');
-  line.append(el('b', 'bat-r ' + (r.now >= 0 ? 'pos' : 'neg'), fmtR(r.now)), el('span', 'bat-of', `of ${fmtR(tpR)} target`));
+  line.append(el('b', 'bat-r ' + (r.now >= 0 ? 'pos' : 'neg'), fmtR(r.now)), el('span', 'bat-of', r.now >= tpR ? `past the ${fmtR(tpR)} target · trailing` : `of ${fmtR(tpR)} target`));
   const adds = el('span', 'bat-adds');
   const far = tpR >= FAR_LOCK.rr;   // 🛡️ a far target: at +7R the stop moves to +3R
   for (const [at, name, what] of [[1, 'Add 1', 'add the same size, stops to entry'], [2, 'Add 2', 'add half, stops to break-even'], ...(far ? [[FAR_LOCK.at, `Lock +${FAR_LOCK.to}R`, `far target: move the stop to +${FAR_LOCK.to}R`]] : [])]) {
@@ -50,7 +50,7 @@ export function batteryBody(p, plan = null) {
     const c = el('span', 'cell' + (i === n - 1 ? ' tp' : '') + (i + 1 <= 2 && i + 1 < tpR ? ' add' : '') + (far && i + 1 === FAR_LOCK.at ? ' lock-at' + (r.now >= FAR_LOCK.at ? ' lock' : '') : ''));
     const f = Math.max(0, Math.min(1, r.now - i));
     if (f > 0) { c.classList.add('lit'); c.style.setProperty('--f', f); }
-    c.title = i === n - 1 ? `the target, ${fmtR(tpR)}` : far && i + 1 === FAR_LOCK.at ? `${fmtR(i)} → ${fmtR(i + 1)}: at +${FAR_LOCK.at}R, lock +${FAR_LOCK.to}R (move the stop)` : `${fmtR(i)} → ${fmtR(i + 1)}`;
+    c.title = i === n - 1 ? `the target, ${fmtR(tpR)}: then trail the stop behind each 4h candle` : far && i + 1 === FAR_LOCK.at ? `${fmtR(i)} → ${fmtR(i + 1)}: at +${FAR_LOCK.at}R, lock +${FAR_LOCK.to}R (move the stop)` : `${fmtR(i)} → ${fmtR(i + 1)}`;
     cells.append(c);
   }
   box.append(line, cells);

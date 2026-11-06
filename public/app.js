@@ -1304,7 +1304,12 @@ function renderPositions() {
     const notes = positionNotes(p, { sessions: bias?.sessions || [], price, equity: equityNow(), smt: smtFor(p), plan });
     if (notes.length) {
       // each note's edge colour by what it's about (a warning stays amber)
-      const n = el('div', 'pos-notes'); n.append(...notes.map(x => { const e = el('span', `pos-note ${x.cls} ${noteTopic(x.text)}`, x.text); e.title = x.text; return e; })); row.append(n);
+      const n = el('div', 'pos-notes'), MAX_NOTES = 4;
+      const shownNotes = notes.length > MAX_NOTES ? notes.slice(0, MAX_NOTES) : notes, extra = notes.slice(shownNotes.length);
+      n.append(...shownNotes.map(x => { const e = el('span', `pos-note ${x.cls} ${noteTopic(x.text)}`, x.text); e.title = x.text; return e; }));
+      // more than four: a tiny +N on the last one, the rest in its tooltip (no extra row)
+      if (extra.length) { const last = n.lastElementChild, more = el('span', 'pos-more', `+${extra.length}`); more.title = extra.map(x => x.text).join('\n\n'); more.tabIndex = 0; last.append(more); }
+      row.append(n);
     }
     return row;
   }));
