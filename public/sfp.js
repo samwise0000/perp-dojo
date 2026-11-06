@@ -277,6 +277,33 @@ export function signalsIf(history, candle, opts = {}) {
   return detect(cs, opts).signals.filter(s => s.k === cs.length - 1);
 }
 
+// ---- Monitoring: the forming candle against the levels it could sweep ----
+// Every live level the forming `candle` could make a signal at, by detect's own rules (old enough, in the
+// outer part of the 7-day range, not used or broken), and where the candle stands against it:
+//   'swept'   the wick went past and price is back inside: it signals if it closes here
+//   'beyond'  price is past the level now: it needs to close back inside to signal
+//   'near'    not reached yet; `toGo` is how far the wick still has to go (a share of price), `atr` in 4h ATRs
+// Nearest first within each state. `history` is closed 4h candles ending right before `candle`.
+export function nearLevels(history, candle, opts = ALERT_SETTINGS) {
+  const o = { ...SFP_DEFAULTS, ...opts }, last = history.at(-1);
+  if (!last || !candle) return [];
+  // a flat stand-in for the forming candle: the levels as they are when it opened (none swept or broken by it)
+  const flat = { t: candle.t, o: last.c, h: last.c, l: last.c, c: last.c };
+  const { live } = detect([...history, flat], o);
+  const k = history.length, back = history.slice(-Math.round((o.rangeDays ? o.rangeDays * 86_400_000 : o.lookbackDays * 86_400_000) / H4));
+  const rHi = Math.max(...back.map(x => x.h)), rLo = Math.min(...back.map(x => x.l));
+  const atr = atrAt(history, k - 1) || null, px = candle.c, order = { swept: 0, beyond: 1, near: 2 };
+  return live.filter(l => k - l.i >= o.minAge).map(l => {
+    const high = l.kind === 'high', pos = rHi > rLo ? (l.price - rLo) / (rHi - rLo) : null;
+    if (o.edge && (pos === null || (high ? pos < 1 - o.edge : pos > o.edge))) return null;   // mid-range: wouldn't count
+    const past = high ? l.price * (1 + o.minSweep) : l.price * (1 - o.minSweep);
+    const swept = high ? candle.h > past : candle.l < past, beyond = high ? px > l.price : px < l.price;
+    const toGo = swept ? 0 : (high ? past - candle.h : candle.l - past) / px;
+    return { kind: l.kind, side: high ? 'Short' : 'Long', price: l.price, t: l.t, pos, state: swept ? (beyond ? 'beyond' : 'swept') : 'near',
+      toGo, atr: atr ? (toGo * px) / atr : null, inside: (high ? l.price - px : px - l.price) / px, wick: high ? candle.h : candle.l };
+  }).filter(Boolean).sort((a, b) => order[a.state] - order[b.state] || a.toGo - b.toGo || Math.abs(a.inside) - Math.abs(b.inside));
+}
+
 // The price a signal's close must stay on the right side of: the outermost
 // level it failed at (a short still signals while it closes at or below its
 // highest swept level), and how far inside that the price is now.
@@ -496,6 +523,17 @@ export function candleShape(prev, c, side) {
 // +0.56R for one limit at 70% (−0.23R); A grades and up +1.13R against +0.81R. First entry only it's about even.
 // Slippage at the tight stops of the deep rungs isn't modelled, so the real edge is smaller.
 export const LADDER = [0.7, 0.75, 0.8, 0.85, 0.9];
+// When the plan enters on the 🪜 ladder instead of the close: 'away', a candle that closed away from the level
+// (every grade), or 'chase', BTC's 1h RSI has ⚠️ already run the trade's way on an A+, A++, B or C (the move
+// is mostly done, so wait for the pullback). 1 year, plan trades tagged ⚠️: +1.90R a setup on the ladder against
+// +0.95R at the close; A+ +2.10R and A++ +2.11R better, plain A worse (−0.68R, so it stays at the close). The
+// gain comes from fewer, bigger runners (without the best 3 it's about even), and the samples are small.
+export const CHASE_LADDER = new Set(['A+', 'A++', 'B', 'C']);
+export function ladderWhy(grade, btcRsiKind, shape) {
+  if (!shape?.ladder) return null;
+  if (shape.away) return 'away';
+  return btcRsiKind === 'chase' && CHASE_LADDER.has(grade) ? 'chase' : null;
+}
 const ladderSum = (rungs, f) => rungs.reduce((n, t) => n + 0.2 * f(t), 0);
 // The trade as the five limits played out (limitTrade for each). R, net and the scaled result are in units of the
 // whole setup's 1R (a rung that never filled adds 0). entry: the size-weighted average of the rungs that filled.

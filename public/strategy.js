@@ -305,7 +305,7 @@ export function renderStrategy(root) {
     <h2>Entry, stop, target</h2>
     <div class="st-fig">${candlesSvg({ trade: true })}</div>
     <div class="st-three">
-      <div class="st-pill"><b>Entry</b><span>At the signal candle’s close. No waiting for a retest: the best runners never come back.</span></div>
+      <div class="st-pill"><b>Entry</b><span>At the signal candle’s close. No waiting for a retest: the best runners never come back. Two exceptions take a 🪜 ladder of 5 limits 70–90% of the candle back toward the wick, a fifth of the risk each: a candle that closed away from the level, and an A+, A++, B or C whose BTC 1h RSI has ⚠️ already run the trade’s way (+1.90R a plan setup on the ladder vs +0.95R at the close, past year; plain A does better at the close).</span></div>
       <div class="st-pill neg"><b>Stop</b><span>Just beyond the signal candle’s wick. That distance is 1R, your risk.</span></div>
       <div class="st-pill pos"><b>Target, then trail</b><span>The <b>opposing level</b>: the most extreme opposite swing body between the swept swing and the signal, where the move into the sweep started. When it’s touched, don’t close: trail the stop behind each closed 4h candle.</span></div>
     </div>
@@ -385,7 +385,7 @@ export function renderStrategy(root) {
       <li><b>Entry</b> at the close, 1 unit, stop at the wick.</li>
       <li><b>At +1R</b> add the same size. Move <b>all</b> stops to your entry.</li>
       <li><b>At +2R</b> add half size. Move all stops to the <b>whole position’s break-even</b> (its average entry, plus ~0.15% for fees).</li>
-      <li><b>At the target, trail.</b> Don’t close: move the stop to each closed 4h candle’s low (a short: its high), only ever tighter, until a candle trades through it. Adds the target comes before are skipped. In the backtest the trail made <b>+2.18R</b> a plan trade against +1.77R for closing at the target, and held up without its best 3 trades (+1.55R vs +1.29R). <span class="muted">Optional: take half off at the target and trail the rest: +1.97R, a little less on average, but it banks profit and halves what a reversal after the touch takes back.</span></li>
+      <li><b>At the target, trail.</b> Don’t close: move the stop to each closed 4h candle’s low (a short: its high), only ever tighter, until a candle trades through it. Adds the target comes before are skipped. In the backtest the trail made <b>+2.18R</b> a plan trade against +1.77R for closing at the target, and held up without its best 3 trades (+1.55R vs +1.29R). <span class="muted">Optional: take half off at the target and trail the rest: +1.97R, a little less on average, but it banks profit and halves what a reversal after the touch takes back. Or the other way, on a breakout: add half the first entry’s size at each 4h close past the target, stop at the trail: +2.47R on average, but +1.57R vs +1.55R without the best 3, so it only pays on the rare parabolic run. Not part of the plan.</span></li>
     </ol>
     <p class="muted small">Each add risks 1R back to the entry, so a trade that reaches +2R can no longer lose.</p>
   </section>

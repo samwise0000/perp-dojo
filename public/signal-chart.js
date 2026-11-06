@@ -23,6 +23,11 @@ export function outcomeIn(t, withAdds) {
   const net = t.result === 'open' ? null : t.net ?? t.R - (TAKER_FEE + (t.result === 'win' && !t.trail ? MAKER_FEE : TAKER_FEE)) / t.riskPct;   // a 🪜 ladder brings its own
   return { result: t.result, R: t.R, net, exitT: t.exitT, adds: 0, rr: t.rr, trail: t.trail, tpT: t.tpT };
 }
+// a ladder's R:R on its filled rungs alone: their own R:Rs, averaged (each risks the same fifth)
+function rrOfFilled(t) {
+  const d = t.tp > t.sl ? 1 : -1, xs = t.ladder.filled.map(px => d * (t.tp - px) / Math.abs(px - t.sl)).filter(Number.isFinite);
+  return xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : 0;
+}
 // the page hands over apiJson, price formatting and the replay window once
 export const bindCharts = c => { if (!ctx) ctx = c; };
 // the Signals page fills this in: a signal → its grade + tags' record over the past year (the guide's header)
@@ -99,7 +104,12 @@ export function chartItem(s) {
     : `No size: ${pr.why}.`);
   const far = tr && !cpp && tr.rr >= FAR_LOCK.rr;
   if (tr) {
-    if (tr.ladder) entry.push(`Closed away: 🪜 ${tr.ladder.prices.map(x => `**${p(x)}**`).join(' · ')}, ⅕ risk each. Cancel after 24h or if TP trades first.`);
+    if (tr.ladder) {
+      entry.push(`${tr.ladderWhy === 'chase' ? 'BTC’s RSI already ran, so wait for the pullback' : 'Closed away'}: 🪜 ${tr.ladder.prices.map(x => `**${p(x)}**`).join(' · ')}, ⅕ risk each. Cancel after 24h or if TP trades first.`);
+      // the ladder's R:R (a fifth of each rung's) against entering at the close
+      const c0 = s.atClose?.rr, got = tr.ladder.filled.length;
+      entry.push(`R:R **${tr.rr.toFixed(1)}R** if all 5 fill${Number.isFinite(c0) ? `, vs ${c0.toFixed(1)}R at the close` : ''}${got && got < 5 && !tr.pending ? `. ${got} of 5 filled: **${(got / 5 * rrOfFilled(tr)).toFixed(1)}R** at the target` : ''}.`);
+    }
     else if (tr.limit) entry.push(`Closed away: limit **${p(tr.entry)}**${pr?.pct ? sizeText(1) : ''}. Cancel after 24h or if TP trades first.`);
     else entry.push(`${buy} at the close **${p(tr.entry)}**${pr?.pct ? sizeText(1) : ''}.`);
     entry.push(`Stop ${beyond} the wick, **${p(tr.sl)}**: that’s 1R.`);
@@ -113,6 +123,7 @@ export function chartItem(s) {
     else {
       exit.push(`At TP **don’t close**: trail the stop to each closed 4h candle’s ${short ? 'high' : 'low'}.`);
       exit.push('Or take half off at TP and trail the rest: ~0.2R less a trade, half the give-back.');
+      exit.push('Optional on a parabolic run: add half size at each 4h close past TP, stop at the trail. Pays on the rare big run.');
     }
   } else exit.push('No trade: no opposing level to aim for.');
   const n = o?.exitT ? Math.round((o.exitT - s.t) / H4) : 0;
@@ -149,7 +160,7 @@ export function chartItem(s) {
         sections: [
           { key: 'entry', title: 'Entry', steps: entry,
             figure: tr ? (tr.ladder ? `🪜 ${p(tr.ladder.prices[0])} – ${p(tr.ladder.prices.at(-1))}` : `${tr.limit ? 'LO ' : ''}${p(tr.entry)}`) : '—',
-            sub: tr ? `stop ${p(tr.sl)} · ${(tr.riskPct * 100).toFixed(2)}%` : '',
+            sub: tr ? (tr.ladder ? `${tr.ladderWhy === 'chase' ? '⚠️ BTC ran' : 'closed away'} · ${tr.rr.toFixed(1)}R if all fill` : `stop ${p(tr.sl)} · ${(tr.riskPct * 100).toFixed(2)}%`) : '',
             state: !tr ? 'skip' : tr.missed ? 'skip' : tr.pending ? 'wait' : 'done',
             badge: !tr ? 'no trade' : tr.missed ? 'never filled' : tr.pending ? 'waiting' : tr.ladder ? `${tr.ladder.filled.length}/5 filled` : 'filled' },
           { key: 'manage', title: 'Trade management', steps: manage,
@@ -158,7 +169,7 @@ export function chartItem(s) {
             state: !tr || tr.missed || tr.pending ? 'skip' : o?.adds ? 'done' : o?.result === 'open' ? 'wait' : 'idle',
             badge: !tr || tr.missed || tr.pending ? '' : o?.adds ? (o.adds === 1 ? 'add 1 in' : 'both adds in') : o?.result === 'open' ? 'watching' : 'no adds hit' },
           { key: 'exit', title: 'Exit', steps: exit,
-            figure: tr ? (cpp ? p(tr.tp) : `${p(tr.tp)} → trail`) : '—', sub: tr ? `${tr.rr.toFixed(1)}R${plan?.adds.length && !cpp ? ` · ${rText(plan.R)} with adds` : ''}${cpp ? '' : ' · then each 4h candle'}` : '',
+            figure: tr ? (cpp ? p(tr.tp) : `${p(tr.tp)} → trail`) : '—', sub: tr ? `${tr.rr.toFixed(1)}R${tr.ladder ? ' (🪜)' : ''}${plan?.adds.length && !cpp ? ` · ${rText(plan.R)} with adds` : ''}${cpp ? '' : ' · then each 4h candle'}` : '',
             state: !outcome || !o || tr.missed || tr.pending ? 'skip' : o.result === 'open' ? 'wait' : outcome.cls || 'idle',
             badge: !o || tr.missed || tr.pending ? '' : o.result === 'open' ? (o.trailing ? 'trailing' : 'open') : rText(o.R) },
         ],
@@ -168,7 +179,9 @@ export function chartItem(s) {
         ...(tr ? [
           { price: tr.tp, color: 'ink', from: tr.tpT, to: s.t },                      // the opposing level, from its swing
           // the position, drawn to the right of the candles
-          { price: tr.entry, color: 'entry', after: true, title: tr.limit ? 'LO' : 'Entry' },
+          // 🪜 the five limits, and where the filled ones average (LO)
+          ...(tr.ladder ? tr.ladder.prices.map((x, i) => ({ price: x, color: 'muted', after: true, title: `🪜${i + 1}${tr.ladder.filled.includes(x) ? ' ✓' : ''}` })) : []),
+          { price: tr.entry, color: 'entry', after: true, title: tr.ladder ? 'LO avg' : tr.limit ? 'LO' : 'Entry' },
           { price: tr.sl, color: 'neg', after: true, title: 'SL' },
           { price: tr.tp, color: 'pos', after: true, title: cpp ? 'TP' : 'TP → trail' },
           // C++ is tracked with fixed 2R / 3R targets, so those replace the add levels
@@ -189,7 +202,7 @@ export function chartItem(s) {
         ...(o?.tpT && o.tpT !== o.exitT ? [{ t: o.tpT, position: short ? 'belowBar' : 'aboveBar', shape: 'circle', color: 'pos', tip: [`Target ${p(tr.tp)} touched · trailing the stop from here`] }] : []),
         ...(o?.exitT ? [{ t: o.exitT, position: o.result === 'win' ? (short ? 'belowBar' : 'aboveBar') : (short ? 'aboveBar' : 'belowBar'), shape: 'square', color: o.R > 0 ? 'pos' : 'neg', tip: [endTip] }] : []),
       ],
-      note: (tr?.ladder ? 'This candle closed away from the level, so the entry is a 🪜 ladder of 5 limits 70–90% of the candle back toward the wick (LO is where the filled ones average), not its close;' : tr?.limit ? 'This candle closed away from the level, so the entry is a limit 70% of the candle back toward the wick (LO), not its close;' : 'Entry at the signal candle’s close,') + ' stop at its wick, target at the opposing swing level the move started from; once it’s touched, the stop trails each closed 4h candle. The position is drawn to the right of the candles: red is the risk, the other zone the reward. Circles mark the swing candles; the square marks where the trade ended.',
+      note: (tr?.ladder ? `${tr.ladderWhy === 'chase' ? 'BTC’s 1h RSI had already run the trade’s way' : 'This candle closed away from the level'}, so the entry is a 🪜 ladder of 5 limits 70–90% of the candle back toward the wick (LO is where the filled ones average), not its close;` : tr?.limit ? 'This candle closed away from the level, so the entry is a limit 70% of the candle back toward the wick (LO), not its close;' : 'Entry at the signal candle’s close,') + ' stop at its wick, target at the opposing swing level the move started from; once it’s touched, the stop trails each closed 4h candle. The position is drawn to the right of the candles: red is the risk, the other zone the reward. Circles mark the swing candles; the square marks where the trade ended.',
     },
   };
 }

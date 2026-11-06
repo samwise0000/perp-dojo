@@ -597,3 +597,28 @@ test('🪜 ladder: five limits 70–90% back, each a fifth of the risk; a rung t
   const run = [...c, { t: 2 * h, o: 109, h: 121, l: 108, c: 120 }];
   assert.equal(ladderTrade(run, 1, trade, false, sh.ladder).missed, 'ran');
 });
+
+test('monitoring: the forming candle against the levels it could sweep (near, swept, beyond)', async () => {
+  const { nearLevels, signalsIf, H4, ALERT_SETTINGS } = await import('../public/sfp.js');
+  const rows = Array.from({ length: 50 }, (_, i) => (i === 40 ? [100, 109, 99, 108] : [100, 103, 97, 100]));
+  const hist = rows.map(([o, h, l, c], i) => ({ t: i * H4, o, h, l, c }));            // a swing high at 108 (its body)
+  const at = c => nearLevels(hist, { t: 50 * H4, ...c });
+  const near = at({ o: 100, h: 107, l: 99, c: 106 });
+  assert.deepEqual(near.map(x => [x.side, x.price, x.state]), [['Short', 108, 'near']]);
+  assert.ok(near[0].toGo > 0.01 && near[0].toGo < 0.011);                           // 107 → past 108.108
+  const swept = { o: 100, h: 109, l: 99, c: 107 };
+  assert.equal(at(swept)[0].state, 'swept');
+  assert.equal(signalsIf(hist, { t: 50 * H4, ...swept }, ALERT_SETTINGS).length, 1, 'swept and back inside is exactly what signals');
+  assert.equal(at({ o: 100, h: 109, l: 99, c: 108.5 })[0].state, 'beyond');
+  assert.equal(signalsIf(hist, { t: 50 * H4, o: 100, h: 109, l: 99, c: 108.5 }, ALERT_SETTINGS).length, 0);
+});
+
+test('🪜 the ladder entry: every closed-away candle, and A+ / A++ / B / C when BTC’s RSI already ran', async () => {
+  const { ladderWhy } = await import('../public/sfp.js');
+  const at = { away: false, ladder: [1, 2, 3, 4, 5] }, away = { away: true, ladder: [1, 2, 3, 4, 5] };
+  assert.equal(ladderWhy('A', null, away), 'away');
+  for (const g of ['A+', 'A++', 'B', 'C']) assert.equal(ladderWhy(g, 'chase', at), 'chase', g);
+  for (const g of ['A', 'S', 'S+', 'S++', 'B+']) assert.equal(ladderWhy(g, 'chase', at), null, g);
+  assert.equal(ladderWhy('A+', 'cool', at), null);
+  assert.equal(ladderWhy('A+', 'chase', null), null);
+});

@@ -269,7 +269,7 @@ export function guidelines({ equity = null, hidden = false, money = v => `$${Mat
   label();
   const usd = g => (equity && !hidden ? ` (${money(equity * RISK_PCT[g] / 100)})` : '');
   const guide = [
-    ['🎯', 'Entry', 'At the 4h close · stop at the wick · target the opposing level'],
+    ['🎯', 'Entry', 'At the 4h close · 🪜 ladder 70–90% back if it closed away, or on A+ / A++ / B / C when BTC’s RSI already ran · stop at the wick · target the opposing level'],
     ['➕', 'Scale in', '+1R: add 1×, stops → entry · +2R: add ½×, stops → break-even'],
     ['🏁', 'Exit', 'At the target don’t close: trail the stop to each closed 4h candle’s low (a short: its high)'],
     ['📏', 'Risk', `A+ / A++ ${pctText(RISK_PCT['A+'])}${usd('A+')} · A ${pctText(RISK_PCT.A)}${usd('A')} · half on Weak, ¼ on Caution`],
@@ -335,6 +335,9 @@ export function positionNotes(p, { sessions = [], now = new Date(), price = v =>
       : { cls: 'warn', text: `Trailing past the target: move the stop to ${price(ts)}, the last 4h candle’s ${long ? 'low' : 'high'}` });
     // the softer option: bank half, trail the rest (about 0.2R a trade less in the backtest, half the give-back)
     if (ts == null || !set) notes.push({ cls: 'muted', text: 'Optional: take half off here and trail the rest, a little less on average but half the give-back' });
+    // the other way: press a breakout. Half the first entry's size at each 4h close past the target, stop at the trail
+    // (1 year: +2.47R a plan trade vs +2.18R, but +1.57R vs +1.55R without the best 3: it pays on the rare parabolic run)
+    notes.push({ cls: 'muted', text: `Optional, a parabolic run: at each 4h close ${long ? 'above' : 'below'} ${price(plan.tp)}, add half your first entry’s size, stop at the trail. It pays on the rare big run, about even otherwise` });
   }
   if (p.sl && p.entry && p.mark && !pastTp) {
     const risk = d * (p.entry - p.sl);

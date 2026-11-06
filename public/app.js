@@ -12,6 +12,7 @@ import { openReplay } from './replay.js';
 import { renderSignalsView, renderSignalsWidget, renderCloseBreakdown, planFor } from './signals.js';
 import { renderStrategy } from './strategy.js';
 import { renderForward } from './forward.js';
+import { renderMonitor, startMonitor } from './monitor.js';
 import { nySessions, currentBias, NY_HOURS, NY_TZ, nyPullbackAt } from './bias.js';
 import { rsi as rsiOf } from './sfp.js';
 import { normalizeAll } from './trades.js';
@@ -268,7 +269,7 @@ applyTheme(savedTheme() || systemTheme());
 matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => { if (!savedTheme()) applyTheme(systemTheme()); });
 
 // ---------- views ----------
-const TITLES = { dashboard: 'Dashboard', analytics: 'Analytics', journal: 'Journal', review: 'Weekly review', reports: 'Reports', playbook: 'Playbook', wizard: 'Entry wizard', trades: 'Trades', signals: 'Signals', strategy: 'Strategy', forward: 'Forward test' };
+const TITLES = { dashboard: 'Dashboard', analytics: 'Analytics', journal: 'Journal', review: 'Weekly review', reports: 'Reports', playbook: 'Playbook', wizard: 'Entry wizard', trades: 'Trades', signals: 'Signals', monitor: 'Monitoring', strategy: 'Strategy', forward: 'Forward test' };
 function setView(v, { hash = true } = {}) {
   view = v; store.set('view', v);
   if (hash) syncHash();
@@ -613,8 +614,9 @@ function render() {
     ? `${s.n.toLocaleString()} closed trade${s.n === 1 ? '' : 's'} · ${date(from ?? s.first)} – ${date(to ?? s.last)}${filters.symbol !== 'all' ? ' · ' + filters.symbol : ''}${filters.side !== 'all' ? ' · ' + filters.side.toLowerCase() + 's' : ''}${filters.strategy !== 'all' ? ' · ' + (filters.strategy === 'none' ? 'unlabeled' : strategyName(filters.strategy)) : ''}`
     : 'No closed trades in this range.';
   // the journal is about days, not the filtered range: no filters, its own subtitle
-  $('#report .filters').hidden = ['journal', 'playbook', 'wizard', 'review', 'reports', 'signals', 'strategy', 'forward'].includes(view);
+  $('#report .filters').hidden = ['journal', 'playbook', 'wizard', 'review', 'reports', 'signals', 'monitor', 'strategy', 'forward'].includes(view);
   if (view === 'signals') $('#rangeText').textContent = 'Every 4h swing failure on your pairs, as the Telegram alerts see them';
+  if (view === 'monitor') $('#rangeText').textContent = 'An hour before each 4h close: the pairs at or near a level they could sweep';
   if (view === 'reports') $('#rangeText').textContent = 'A written report for each month, from every trade in it';
   if (view === 'forward') $('#rangeText').textContent = 'Your live trades against the plan, matched signal by signal';
   if (view === 'strategy') $('#rangeText').textContent = 'The 4h swing-failure strategy: the setup, the grades, when and how much';
@@ -634,6 +636,7 @@ function render() {
   else if (view === 'review') renderReview();
   else if (view === 'reports') renderReports();
   else if (view === 'signals') renderSignalsView(scanCtx());
+  else if (view === 'monitor') renderMonitor($('#view-monitor'), scanCtx());
   else if (view === 'strategy') renderStrategy($('#view-strategy'));
   else if (view === 'forward') renderForward($('#view-forward'), { ctx: scanCtx(), trades: all, execs: cache?.execs, fmt: { money, dateTime } });
   else renderTrades(trades);
@@ -1074,6 +1077,8 @@ function btcNow(candles) {
 setInterval(() => { if (view === 'dashboard' && !document.hidden) { tickPlaybook($('#dayPlaybook')); renderDayPlaybook(); } }, 20_000);
 setInterval(() => { if (view === 'dashboard' && !document.hidden) tickSeconds(document); }, 1000);
 setInterval(() => { if (view === 'dashboard' && !document.hidden) refreshBias(); }, BIAS_EVERY);
+// Monitoring checks the pairs in the hour before each close while the page is open, so its nav count stays current
+startMonitor(scanCtx());
 document.addEventListener('visibilitychange', () => { if (!document.hidden && view === 'dashboard') refreshBias(); });
 
 const nyTime = ms => new Date(ms).toLocaleTimeString(undefined, { timeZone: NY_TZ, hour: 'numeric', minute: '2-digit' });

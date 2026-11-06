@@ -2,7 +2,7 @@
 // rules and filters as the Telegram alerts (sfp.js ALERT_SETTINGS), so the
 // site and the bot always agree. The Signals tab lists them all; the dashboard
 // shows the latest few. Candles come from the IndexedDB cache in signal-chart.js.
-import { ladderTrade, detect, H4, ALERT_SETTINGS, DEFAULT_PAIRS, trendMap, btcSide, gradeSetup, rsi, GRADE_ORDER, btcRsiTag, candleShape, limitTrade, tierOf, scalePlan, emaGuard, SHORT_EMA, atrAt, goldenRR, goldenRaw, fullSweep, FAR_LOCK, whaleAbsorption, WHALE_TIP, winModel, projectWin, signalTags } from './sfp.js';
+import { ladderTrade, ladderWhy, detect, H4, ALERT_SETTINGS, DEFAULT_PAIRS, trendMap, btcSide, gradeSetup, rsi, GRADE_ORDER, btcRsiTag, candleShape, limitTrade, tierOf, scalePlan, emaGuard, SHORT_EMA, atrAt, goldenRR, goldenRaw, fullSweep, FAR_LOCK, whaleAbsorption, WHALE_TIP, winModel, projectWin, signalTags } from './sfp.js';
 import { sessionList, nyBiasAt, nyFadeAt, fadesNy, nyPullbackAt, inGoldenZone } from './bias.js';
 import { setupName, proposedRisk, picksAt } from './day-playbook.js';
 import { idbGet, idbSet } from './db.js';
@@ -66,10 +66,14 @@ async function compute(days) {
         // how it's doing now, for signals younger than 24h
         const run = last && last.t > s.t ? (s.side === 'Short' ? s.close - last.c : last.c - s.close) / s.close : null;
         const shape = candleShape(candles[s.k - 1], candles[s.k], s.side);
-        // closed away from the level: the plan is a 🪜 ladder of 5 limits 70–90% back toward the wick, not the close
-        const trade = shape?.away ? ladderTrade(candles, s.k, s.trade, s.side === 'Short', shape.ladder) : s.trade;
-        const best = bestRs(candles, s.k, trade, s.side === 'Short');
-        return { ...s, trade, best, atClose: s.trade, atr: atrAt(candles, s.k), full: fullSweep(s, t => byT.get(t)), symbol, running: run, rsi: r14[s.k], shape, whale: flow ? whaleAbsorption(s.side, s.t, flow) : null };
+        // closed away from the level: the plan is a 🪜 ladder of 5 limits 70–90% back toward the wick, not the close.
+        // The ladder is worked out for the others too: once graded, an A+ / A++ / B / C whose BTC RSI already ran
+        // takes it as well (ladderWhy, below)
+        const short = s.side === 'Short', lad = shape?.ladder ? ladderTrade(candles, s.k, s.trade, short, shape.ladder) : null;
+        const trade = shape?.away && lad ? { ...lad, ladderWhy: 'away' } : s.trade;
+        const best = bestRs(candles, s.k, trade, short);
+        const alt = !shape?.away && lad ? { trade: { ...lad, ladderWhy: 'chase' }, best: bestRs(candles, s.k, lad, short) } : null;
+        return { ...s, trade, best, alt, atClose: s.trade, atr: atrAt(candles, s.k), full: fullSweep(s, t => byT.get(t)), symbol, running: run, rsi: r14[s.k], shape, whale: flow ? whaleAbsorption(s.side, s.t, flow) : null };
       });
     } catch (e) { errors.push(symbol); progress.pairs.set(symbol, 'err'); notify(); return []; }
   });
@@ -95,7 +99,10 @@ async function compute(days) {
     const grade = sessions ? emaGuard(tierOf(gradeSetup(s.side, { ny, swept: btcSfp.has(`${s.t}:${s.side}`), rsi: s.rsi, fade: fadesNy(s.side, fadeAt(s.t + H4)) }), { shape: s.shape, full: s.full, grr: goldenRaw(s.atClose ?? s.trade, s.atr), btcRsi: bRsi, rr: (s.atClose ?? s.trade)?.rr ?? null, whale: s.whale?.kind ?? null, zone: golden != null }), s.side, trends100.get(s.t - H4)?.up) : null;
     const gradeC = grade;
     const btcRsi = gradeC && !['C', 'C++'].includes(gradeC.grade) ? btcRsiTag(s.side, rsiAt.get(s.t + H4)) : null;   // with the NY bias only
-    return { ...s, trend, counter: trend === 'counter', btc: trends.get(s.t - H4) || null, ny, grade: gradeC, golden, btcRsi, goldenRR: goldenRR(gradeC?.grade, s.atClose ?? s.trade, s.atr) };
+    // ⚠️ BTC's RSI already ran the trade's way on an A+ / A++ / B / C: the 🪜 ladder, not the close
+    const chase = s.alt && ladderWhy(gradeC?.grade, bRsi, s.shape) === 'chase';
+    const { alt, ...rest } = s;
+    return { ...rest, ...(chase ? { trade: alt.trade, best: alt.best } : {}), trend, counter: trend === 'counter', btc: trends.get(s.t - H4) || null, ny, grade: gradeC, golden, btcRsi, goldenRR: goldenRR(gradeC?.grade, s.atClose ?? s.trade, s.atr) };
   }).sort((a, b) => b.t - a.t || a.symbol.localeCompare(b.symbol));
   markPicks(signals);
   // the projected win rate's model, from this year of closed signals (kept for the dashboard's two weeks)
@@ -108,6 +115,8 @@ async function compute(days) {
   return { signals, errors, at: Date.now(), days };
 }
 
+// for the Monitoring tab: BTC's 1h candles and a pair's funding + taker flow, from the same caches
+export function monitorHelpers(ctx) { if (!ctx_) ctx_ = ctx; return { hourly, flowFor }; }
 // 1h candles from `start`, cached like the 4h ones (closed candles only)
 const H1 = 3_600_000;
 async function hourly(symbol, start) {
@@ -233,6 +242,7 @@ function setupInfo(s) {
   if (s.golden != null) tags.push(`✨ NY pullback: BTC gave back ${s.golden > 1 ? 'all' : Math.round(s.golden * 100) + '%'} of the last NY move`);
   if (s.btcRsi) tags.push(s.btcRsi.text);
   if (s.shape?.away) tags.push(`🕯️ ${s.shape.engulf ? (s.shape.engulf === 'wick' ? 'Wick engulf' : 'Body engulf') : 'Closed away'}: 🪜 5 limits 70–90% back (${(s.shape.ladder || [s.shape.limit]).map(f).join(', ')}) instead of the close${s.trade?.ladder ? `, ${s.trade.ladder.filled.length} of ${s.trade.ladder.prices.length} filled` : ''}`);
+  if (s.trade?.ladderWhy === 'chase') tags.push(`⚠️ BTC RSI already ran: 🪜 5 limits 70–90% back (${s.trade.ladder.prices.map(f).join(', ')}), a fifth of the risk each`);
   if (s.grade?.skip === 'ema') tags.push('⚠️ A short while BTC is above its 4h EMA100: no size');
   if (s.trend) tags.push({ aligned: 'BTC 4h trend: aligned with the trade', counter: 'BTC 4h trend: against the trade (countertrend)', neutral: 'BTC 4h trend: neutral (within 1% of its EMA50)' }[s.trend]);
   if (s.ny?.bias) tags.push(`NY bias: ${s.ny.bias}${s.ny.during ? ', NY session open' : ''}`);
