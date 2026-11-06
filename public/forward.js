@@ -4,7 +4,7 @@
 // your net P&L ÷ (your first order's size × the signal's entry-to-stop distance).
 // The same signal's plan result (with the adds, after fees) is the yardstick, and
 // the year before your start date says what the plan should average.
-import { loadSignals } from './signals.js';
+import { loadSignals, atCloseSignals } from './signals.js';
 import { showOnChart } from './signal-chart.js';
 import { H4, GRADE_ORDER } from './sfp.js';
 import { proposedRisk, picksAt, setupName } from './day-playbook.js';
@@ -51,7 +51,7 @@ export function matchSignal(pos, signals) {
 }
 
 // Would the plan take this signal at its close (risk > 0), and was it one of the close's picks?
-export const takeable = s => Boolean(s.grade && s.trade) && proposedRisk(s.grade.grade, s.t + H4, { tag: s.grade.tag }).pct > 0;
+export const takeable = s => Boolean(s.grade && s.trade) && proposedRisk(s.grade.grade, s.t + H4, { tag: s.grade.tag, from: s.grade.from, skip: s.grade.skip }).pct > 0;
 export function pickSet(signals) {
   const byClose = new Map();
   for (const s of signals.filter(takeable)) { const k = s.t; if (!byClose.has(k)) byClose.set(k, []); byClose.get(k).push(s); }
@@ -122,7 +122,7 @@ export async function renderForward(root, { ctx, trades, execs, fmt }) {
   if (!state.start) state.start = Date.now() - 30 * DAY;
   root.replaceChildren(el('div', 'card c12', 'Loading the year’s signals…'));
   let data;
-  try { data = await loadSignals(ctx, 365); }
+  try { data = await loadSignals(ctx, 365); data = { ...data, signals: atCloseSignals(data.signals) }; }
   catch (e) { root.replaceChildren(el('div', 'card c12 muted', `Couldn’t load signals: ${e.message}`)); return; }
   const { rows, missed, expect } = forwardReport({ trades, execs, signals: data.signals, start: state.start });
   const on = rows.filter(r => r.onPlan), scored = on.filter(r => r.R !== null), off = rows.filter(r => !r.onPlan);
@@ -159,7 +159,7 @@ export async function renderForward(root, { ctx, trades, execs, fmt }) {
   for (const g of GRADE_ORDER) {
     const x = rows.filter(r => r.grade === g), xs = x.filter(r => r.R !== null), e = expect[g];
     if (!x.length && !e?.n) continue;
-    const tr = el('tr'), b = el('td'); b.append(el('span', 'sig-grade g-' + g.toLowerCase().replace(/\+/g, 'plus'), g === 'A++' ? '★ A++' : g));
+    const tr = el('tr'), b = el('td'); b.append(el('span', 'sig-grade g-' + g.toLowerCase().replace(/\+/g, 'plus'), g === 'A++' ? '★ A++' : g === 'S+' ? '👑 S+' : g));
     const ya = avg(xs.map(r => r.R)), pa = avg(xs.filter(r => r.plan !== null).map(r => r.plan));
     tr.append(b, el('td', 'num', String(x.length)), el('td', 'num ' + cls(ya), rText(ya)), el('td', 'num ' + cls(pa), rText(pa)), el('td', 'num muted', e?.n ? `${rText(e.avg)} (${e.n})` : '—'));
     gb.append(tr);
@@ -195,8 +195,8 @@ export async function renderForward(root, { ctx, trades, execs, fmt }) {
   const tb = el('tbody');
   for (const r of [...rows].reverse()) {
     const tr = el('tr', r.onPlan ? '' : 'fw-off');
-    const g = el('td'); if (r.grade) g.append(el('span', 'sig-grade g-' + r.grade.toLowerCase().replace(/\+/g, 'plus'), r.grade === 'A++' ? '★ A++' : r.grade)); else g.textContent = '—';
-    const sigTxt = !r.sig ? 'no signal' : !r.onPlan ? 'not taken by the plan' : r.pick ? `👉 pick · ${r.sig.trade.rr.toFixed(1)}R target` : `${r.sig.trade.rr.toFixed(1)}R target`;
+    const g = el('td'); if (r.grade) g.append(el('span', 'sig-grade g-' + r.grade.toLowerCase().replace(/\+/g, 'plus'), r.grade === 'A++' ? '★ A++' : r.grade === 'S+' ? '👑 S+' : r.grade)); else g.textContent = '—';
+    const sigTxt = !r.sig ? 'no signal' : !r.onPlan ? 'not taken by the plan' : `${r.sig.trade.rr.toFixed(1)}R target`;
     const gap = r.R !== null && r.plan !== null ? r.R - r.plan : null;
     tr.append(el('td', '', when(r.openedAt)), el('td', '', coin(r.symbol)), el('td', r.dir === 'Long' ? 'pos' : 'neg', r.dir), g, el('td', 'muted', sigTxt), el('td', 'num', String(r.adds)),
       el('td', 'num ' + cls(r.pnl), money(r.pnl)), el('td', 'num ' + cls(r.R), rText(r.R)), el('td', 'num ' + cls(r.plan), r.sig ? (r.plan === null ? 'open' : rText(r.plan)) : '—'), el('td', 'num ' + cls(gap), rText(gap)));
@@ -214,7 +214,7 @@ export async function renderForward(root, { ctx, trades, execs, fmt }) {
     const mt = el('table', 'data compact'); mt.innerHTML = '<thead><tr><th>Close</th><th>Pair</th><th>Side</th><th>Grade</th><th class="num">Target</th><th class="num">Plan</th></tr></thead>';
     const mb = el('tbody');
     for (const s of [...missed].reverse()) {
-      const tr = el('tr', 'clickable'), g = el('td'); g.append(el('span', 'sig-grade g-' + s.grade.grade.toLowerCase().replace(/\+/g, 'plus'), s.grade.grade === 'A++' ? '★ A++' : s.grade.grade));
+      const tr = el('tr', 'clickable'), g = el('td'); g.append(el('span', 'sig-grade g-' + s.grade.grade.toLowerCase().replace(/\+/g, 'plus'), s.grade.grade === 'A++' ? '★ A++' : s.grade.grade === 'S+' ? '👑 S+' : s.grade.grade));
       const p = planR(s);
       tr.append(el('td', '', when(s.t + H4)), el('td', '', coin(s.symbol)), el('td', s.side === 'Long' ? 'pos' : 'neg', s.side), g, el('td', 'num', `${s.trade.rr.toFixed(1)}R`), el('td', 'num ' + cls(p), p === null ? 'open' : rText(p)));
       tr.onclick = () => showOnChart(s, missed);

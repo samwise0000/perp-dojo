@@ -75,6 +75,11 @@ export function openReplay(t, list, ctx) {
   const dlg = $('#replayDlg');
   state = { list, i: Math.max(0, list.indexOf(t)), ctx, iv: null };
   $('#rpClose').onclick = () => dlg.close();
+  // a click on the backdrop closes it (pressed and let go outside the box, so a drag out of it doesn't)
+  const outside = e => { if (e.target !== dlg) return false; const r = dlg.getBoundingClientRect(); return e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom; };
+  let downOut = false;
+  dlg.onpointerdown = e => { downOut = outside(e); };
+  dlg.onclick = e => { if (downOut && outside(e)) dlg.close(); downOut = false; };
   dlg.onclose = () => { chart?.remove(); chart = null; state = null; };
   $('#replayPrev').onclick = () => step(-1);
   $('#replayNext').onclick = () => step(1);

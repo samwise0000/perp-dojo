@@ -9,7 +9,7 @@ import {
   TRADE_TAGS, tagKind, tagStats, dayRecap,
 } from './metrics.js';
 import { openReplay } from './replay.js';
-import { renderSignalsView, renderSignalsWidget, renderCloseBreakdown } from './signals.js';
+import { renderSignalsView, renderSignalsWidget, renderCloseBreakdown, planFor } from './signals.js';
 import { renderStrategy } from './strategy.js';
 import { renderForward } from './forward.js';
 import { nySessions, currentBias, NY_HOURS, NY_TZ, nyPullbackAt } from './bias.js';
@@ -1202,6 +1202,25 @@ function smtFor(p) {
   return null;
 }
 
+// A position's original plan when no signal matches it (a trade outside the system): its entry, stop and
+// target the first time it's seen with the stop still beyond the entry, kept in this browser. After the
+// stop moves to the entry the battery and the 🛡️ lock hint keep measuring R from that first stop.
+function rememberedPlan(p) {
+  const key = `perp-dojo:pos-plan:${p.id}:${p.openedAt || ''}`, d = p.dir === 'Long' ? 1 : -1;
+  let plan = null;
+  try { plan = JSON.parse(localStorage.getItem(key) || 'null'); } catch {}
+  if (!plan && p.sl && p.entry && d * (p.entry - p.sl) > 0) {
+    plan = { entry: p.entry, sl: p.sl, tp: p.tp || null };
+    try { localStorage.setItem(key, JSON.stringify(plan)); } catch {}
+  }
+  return plan ? { ...plan, tp: p.tp || plan.tp } : null;     // the target follows the position's current one
+}
+// an open position as a trade the replay window can draw: entry to the live mark, with its stop and target
+const posChartTrade = p => {
+  const at = p.openedAt || Date.now() - 7 * 864e5;
+  return { open: true, id: 'pos:' + p.symbol + ':' + at, symbol: p.symbol, category: p.category || 'linear', dir: p.dir, size: p.size, leverage: p.leverage, entry: p.entry, exit: p.mark,
+    pnl: p.upnl, fees: 0, funding: 0, sl: p.sl || null, tp: p.tp || null, openedAt: at, time: Date.now(), duration: Date.now() - at, hidePnl: posPnlHidden };
+};
 function renderPositions() {
   const list = $('#posList');
   if (!positions) { list.replaceChildren(el('p', 'muted small', 'Checking Bybit for open positions…')); return; }
@@ -1244,7 +1263,10 @@ function renderPositions() {
   list.replaceChildren(...[ps[posIdx]].map(p => {
     const row = el('div', 'pos-row' + (posSlide ? ' slide-' + posSlide : '')); posSlide = null;
     const name = el('div', 'pos-name');
-    name.append(el('b', '', p.symbol), el('span', 'pos-side ' + (p.dir === 'Long' ? 'long' : 'short'), `${p.dir} ${p.leverage}×`));
+    // the ticker opens the position on the chart, like a trade's replay
+    const tick = el('button', 'pos-ticker', p.symbol); tick.type = 'button'; tick.title = 'Open the chart';
+    tick.onclick = () => { const t = posChartTrade(p); openReplay(t, [t], replayCtx()); };
+    name.append(tick, el('span', 'pos-side ' + (p.dir === 'Long' ? 'long' : 'short'), `${p.dir} ${p.leverage}×`));
     name.append(el('small', 'muted', `${p.size.toLocaleString(undefined, { maximumFractionDigits: 6 })} · ${compact(p.value)} · ${p.openedAt ? 'open ' + fmtDuration(Date.now() - p.openedAt) : 'open over 7 days'}`));
 
     const pnl = el('div', 'pos-pnl');
@@ -1268,7 +1290,8 @@ function renderPositions() {
 
     row.append(name, pnl, px, liq);
     // its progress in R: a block per R up to the target
-    const bat = batteryBody(p); bat.classList.add('pos-bat'); row.append(bat);
+    const plan = planFor(p) || rememberedPlan(p);
+    const bat = batteryBody(p, plan); bat.classList.add('pos-bat'); row.append(bat);
     if (ps.length > 1) {
       const nav = $('#posCycle');
       const prev = el('button', 'pv-arrow', '‹'), next = el('button', 'pv-arrow', '›'); prev.type = next.type = 'button';
@@ -1278,10 +1301,10 @@ function renderPositions() {
       const on = dots.querySelector('.on'); if (on) on.style.setProperty('--p', Math.min(1, 1 - posLeft / POS_EVERY_MS));
     } else $('#posCycle').replaceChildren();
     // the playbook's notes for this position: NY bias, where it is in the plan, weekend
-    const notes = positionNotes(p, { sessions: bias?.sessions || [], price, equity: equityNow(), smt: smtFor(p) });
+    const notes = positionNotes(p, { sessions: bias?.sessions || [], price, equity: equityNow(), smt: smtFor(p), plan });
     if (notes.length) {
       // each note's edge colour by what it's about (a warning stays amber)
-      const n = el('div', 'pos-notes'); n.append(...notes.map(x => el('span', `pos-note ${x.cls} ${noteTopic(x.text)}`, x.text))); row.append(n);
+      const n = el('div', 'pos-notes'); n.append(...notes.map(x => { const e = el('span', `pos-note ${x.cls} ${noteTopic(x.text)}`, x.text); e.title = x.text; return e; })); row.append(n);
     }
     return row;
   }));

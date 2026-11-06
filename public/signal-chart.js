@@ -17,7 +17,7 @@ export const setAdds = on => { adds.on = on; try { localStorage.setItem(ADDS_KEY
 // R before fees, net after fees (null while open), when it ended, adds filled,
 // and rr, what it makes at the target. In R of the first entry's risk.
 export function outcomeOf(t) {
-  if (!t) return null;
+  if (!t || t.missed) return null;                              // a limit that never filled: no trade
   if (adds.on && t.scaled) return t.scaled;
   const net = t.result === 'open' ? null : t.R - (TAKER_FEE + (t.result === 'win' ? MAKER_FEE : TAKER_FEE)) / t.riskPct;
   return { result: t.result, R: t.R, net, exitT: t.exitT, adds: 0, rr: t.rr };
@@ -74,7 +74,7 @@ export function chartItem(s) {
   const firstSwing = Math.min(...s.levels.map(l => l.t), tr ? tr.tpT : Infinity);
   // the chart runs to where the trade ended (or now, if it's still open)
   const o = outcomeOf(tr);
-  const end = tr ? (o.exitT ?? Math.floor(Date.now() / H4) * H4) : s.t;
+  const end = tr ? (o?.exitT ?? (tr.missed ? s.t + 7 * H4 : Math.floor(Date.now() / H4) * H4)) : s.t;
   const plan = scalePlan(tr, s.side);                          // adds at +1R and +2R, stops stepped up behind them
   // the break-even stop to the entry's precision (rounded toward the safe side)
   if (plan?.adds[1]) { const dec = (p(tr.entry).replace(/,/g, '').split('.')[1] || '').length, k = 10 ** dec; plan.adds[1].stop = (short ? Math.floor : Math.ceil)(plan.adds[1].stop * k) / k; }
@@ -83,7 +83,7 @@ export function chartItem(s) {
   const lv = s.levels.map(l => `**${p(l.price)}**`).join(', '), cpp = s.grade?.grade === 'C++';
   const steps = [`The 4h candle that closed ${when(s.t)} wicked ${short ? 'above' : 'below'} ${s.levels.length > 1 ? 'the levels' : 'the level'} ${lv} and closed back ${short ? 'below' : 'above'}: a failed ${short ? 'breakout' : 'breakdown'}.`];
   // the proposed risk: % of equity by grade and close (day-playbook.js), and the size it means
-  const pr = s.grade && tr ? proposedRisk(s.grade.grade, s.t + H4, { tag: s.grade.tag }) : null;
+  const pr = s.grade && tr ? proposedRisk(s.grade.grade, s.t + H4, { tag: s.grade.tag, from: s.grade.from, skip: s.grade.skip }) : null;
   const eq = ctx.equity?.(), hidden = ctx.balanceHidden?.();
   const usd = pr && eq ? eq * pr.pct / 100 : null;
   const qty = usd ? usd / Math.abs(tr.entry - tr.sl) : null;
@@ -93,7 +93,8 @@ export function chartItem(s) {
     ? `Risk **${+pr.pct.toFixed(2)}%** of your equity${usd && !hidden ? `: **${ctx.fmt.money(usd, { sign: false, dp: 0 })}**` : eq === null ? ' (connect your account to see it in dollars)' : ''}. ${pr.why[0].toUpperCase() + pr.why.slice(1)}.`
     : `Proposed risk: **none**. ${pr.why[0].toUpperCase() + pr.why.slice(1)}. The steps below are for reference.`);
   if (tr) {
-    steps.push(`${buy} ${coin} at the close: **${p(tr.entry)}**${pr?.pct ? sizeText(1) : ''}.`);
+    if (tr.limit) steps.push(`The candle closed away from the level (**${p(tr.close)}**), so don’t chase it: set a limit to ${buy.toLowerCase()} ${coin} at **${p(tr.entry)}**, 70% of the candle back toward the wick${pr?.pct ? sizeText(1) : ''}. Cancel it if it hasn’t filled in 24h, or if price reaches the target first.`);
+    else steps.push(`${buy} ${coin} at the close: **${p(tr.entry)}**${pr?.pct ? sizeText(1) : ''}.`);
     steps.push(`Put your stop just ${beyond} the wick at **${p(tr.sl)}**, ${(tr.riskPct * 100).toFixed(2)}% away. That distance is 1R, your risk.`);
     for (const a of cpp ? [] : plan?.adds || []) steps.push(a.n === 1
       ? `If price gets to **${p(a.price)}** (+1R), add the same size again${pr?.pct ? sizeText(1) : ''} and move all stops ${toward} to your entry, **${p(a.stop)}**.`
@@ -104,12 +105,15 @@ export function chartItem(s) {
   } else steps.push('No trade: there’s no opposing level beyond the entry to aim for.');
   const n = o?.exitT ? Math.round((o.exitT - s.t) / H4) : 0;
   const outcome = !tr ? null
+    : tr.missed ? { text: tr.missed === 'ran' ? `The limit at ${p(tr.entry)} never filled: price went to the target without coming back. No trade.` : `The limit at ${p(tr.entry)} didn’t fill within 24h. No trade.`, cls: '' }
+    : tr.pending ? { text: `Waiting for the limit at ${p(tr.entry)} to fill (up to 24h after the close).`, cls: '' }
     : o.result === 'win' ? { text: `Target hit after ${n} candles: ${rText(o.R)}${adds.on && o.adds ? ` with the adds (${rText(tr.R)} on the first entry)` : ' on the first entry'}.`, cls: 'pos' }
     : o.result === 'loss' ? { text: `Stopped out after ${n} candles: −1R.`, cls: 'neg' }
     : o.result === 'entry' ? { text: `Stopped at the entry after add 1, ${n} candles in: ${rText(o.R)}. The first entry broke even; the add lost its 1R.`, cls: 'neg' }
     : o.result === 'be' ? { text: `Stopped at break-even after both adds, ${n} candles in: ${rText(o.R)}.`, cls: o.R > 0 ? 'pos' : 'neg' }
+    : o.result === 'lock' ? { text: `Reached +7R on a far target, the stop moved to +3R and was hit ${n} candles in: ${rText(o.R)}.`, cls: 'pos' }
     : { text: `Still open: ${rText(o.R)} at the last close${adds.on && o.adds ? ` with ${o.adds === 1 ? 'add 1' : 'both adds'} in` : ''}.`, cls: '' };
-  const endTip = { win: `Target hit · ${rText(o?.R ?? 0)}`, loss: 'Stopped out · −1R', entry: `Stopped at the entry · ${rText(o?.R ?? 0)}`, be: `Break-even stop · ${rText(o?.R ?? 0)}` }[o?.result];
+  const endTip = { win: `Target hit · ${rText(o?.R ?? 0)}`, loss: 'Stopped out · −1R', entry: `Stopped at the entry · ${rText(o?.R ?? 0)}`, be: `Break-even stop · ${rText(o?.R ?? 0)}`, lock: `🛡️ Locked +3R · ${rText(o?.R ?? 0)}` }[o?.result];
   const context = [
     s.grade ? `Grade ${s.grade.grade}: ${s.grade.why}` : null,
     [5, 6, 0].includes(new Date(s.t + H4).getDay()) ? 'Weekend setup: no new trades (hold runners from the week)' : null,
@@ -131,7 +135,7 @@ export function chartItem(s) {
         ...(tr ? [
           { price: tr.tp, color: 'ink', from: tr.tpT, to: s.t },                      // the opposing level, from its swing
           // the position, drawn to the right of the candles
-          { price: tr.entry, color: 'entry', after: true, title: 'Entry' },
+          { price: tr.entry, color: 'entry', after: true, title: tr.limit ? 'LO' : 'Entry' },
           { price: tr.sl, color: 'neg', after: true, title: 'SL' },
           { price: tr.tp, color: 'pos', after: true, title: 'TP' },
           // C++ is tracked with fixed 2R / 3R targets, so those replace the add levels
@@ -148,10 +152,10 @@ export function chartItem(s) {
       marks: [
         ...s.levels.map(l => ({ t: l.t, position: short ? 'aboveBar' : 'belowBar', shape: 'circle', color: 'ink', tip: [`Swing ${short ? 'high' : 'low'} · level ${p(l.price)}`, new Date(l.t).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })] })),
         ...(tr ? [{ t: tr.tpT, position: short ? 'belowBar' : 'aboveBar', shape: 'circle', color: 'ink', tip: [`Opposing swing ${short ? 'low' : 'high'} · target ${p(tr.tp)}`] }] : []),
-        { t: s.t, position: short ? 'aboveBar' : 'belowBar', shape: short ? 'arrowDown' : 'arrowUp', color: short ? 'neg' : 'pos', tip: [`SFP ${s.side.toLowerCase()} · entry ${p(s.close)}`, `Wick ${p(short ? s.high : s.low)} is the stop`] },
+        { t: s.t, position: short ? 'aboveBar' : 'belowBar', shape: short ? 'arrowDown' : 'arrowUp', color: short ? 'neg' : 'pos', tip: [tr?.limit ? `SFP ${s.side.toLowerCase()} · closed ${p(s.close)}, limit ${p(tr.entry)}` : `SFP ${s.side.toLowerCase()} · entry ${p(s.close)}`, `Wick ${p(short ? s.high : s.low)} is the stop`] },
         ...(o?.exitT ? [{ t: o.exitT, position: o.result === 'win' ? (short ? 'belowBar' : 'aboveBar') : (short ? 'aboveBar' : 'belowBar'), shape: 'square', color: o.R > 0 ? 'pos' : 'neg', tip: [endTip] }] : []),
       ],
-      note: 'Entry at the signal candle’s close, stop at its wick, target at the opposing swing level the move started from. The position is drawn to the right of the candles: red is the risk, the other zone the reward. Circles mark the swing candles; the square marks where the trade ended.',
+      note: (tr?.limit ? 'This candle closed away from the level, so the entry is a limit 70% of the candle back toward the wick (LO), not its close;' : 'Entry at the signal candle’s close,') + ' stop at its wick, target at the opposing swing level the move started from. The position is drawn to the right of the candles: red is the risk, the other zone the reward. Circles mark the swing candles; the square marks where the trade ended.',
     },
   };
 }

@@ -219,13 +219,13 @@ test('the scaling plan: adds at +1R and +2R, stops stepped up behind them', asyn
 test('proposed risk: by grade, half on a weak close, none outside the trading day', async () => {
   const { proposedRisk } = await import('../public/day-playbook.js');
   const at = (d, h) => new Date(2026, 10, 1 + d, h).getTime();      // Nov 2 2026 is a Monday (local time)
-  assert.equal(proposedRisk('A++', at(1, 8)).pct, 2);                 // Monday 08:00, prime
+  assert.equal(proposedRisk('A++', at(1, 8)).pct, 1);                 // Monday 08:00, prime
   assert.equal(proposedRisk('A+', at(1, 8)).pct, 1);
   assert.equal(proposedRisk('A+', at(1, 20)).pct, 0);                  // the RSI A+ isn't taken at the late closes
-  assert.equal(proposedRisk('A', at(1, 12)).pct, 1);
-  assert.equal(proposedRisk('A', at(4, 16)).pct, 0.5);                 // Thursday 16:00 is weak: half
-  assert.equal(proposedRisk('A', at(5, 8)).pct, 0.25);                 // Friday: trade cautiously, a quarter size
-  assert.equal(proposedRisk('A++', at(5, 16)).pct, 0.5);
+  assert.equal(proposedRisk('A', at(1, 12)).pct, 0.5);
+  assert.equal(proposedRisk('A', at(4, 16)).pct, 0.25);                // Thursday 16:00 is weak: half
+  assert.equal(proposedRisk('A', at(5, 8)).pct, 0.125);                // Friday: trade cautiously, a quarter size
+  assert.equal(proposedRisk('A++', at(5, 16)).pct, 0.25);
   assert.equal(proposedRisk('B', at(5, 12)).pct, 0);                   // no B
   const { picksAt } = await import('../public/day-playbook.js');
   assert.equal(picksAt(at(5, 12)), 1); assert.equal(picksAt(at(2, 12)), 2);   // the best setup only on Friday
@@ -258,7 +258,7 @@ test('proposed risk: by grade, half on a weak close, none outside the trading da
   assert.equal(proposedRisk('A', at(2, 0)).pct, 0);                    // an A at 00:00 without BTC's sweep: no
   assert.equal(proposedRisk('A', at(2, 4), { tag: 'midnight' }).pct, 0);      // only at 00:00
   assert.equal(proposedRisk('A', at(5, 0), { tag: 'midnight' }).pct, 0.0625);   // Thursday night: a quarter
-  assert.equal(proposedRisk('A', at(1, 8), { tag: 'midnight' }).pct, 1);      // at a main close it's just an A
+  assert.equal(proposedRisk('A', at(1, 8), { tag: 'midnight' }).pct, 0.5);    // at a main close it's just an A
   assert.equal(proposedRisk('C', at(1, 8)).pct, 0);
 });
 
@@ -269,17 +269,17 @@ test('position notes: NY bias, plan step, weekend', async () => {
   const wed = new Date(2026, 10, 4, 10);
   const short = { dir: 'Short', entry: 100, sl: 102, mark: 97, openedAt: t0 - day / 2 };
   const n = positionNotes(short, { sessions, now: wed }).map(x => x.text);
-  assert.match(n[0], /NY flipped your way since entry ▼/);
-  assert.match(n[1], /^\+1\.5R: past \+1R/);
+  assert.match(n[0], /NY flipped your way ▼/);
+  assert.match(n[1], /^\+1\.5R: add the same size, stops to entry/);
   assert.match(positionNotes({ ...short, dir: 'Long', sl: 98, mark: 100.5 }, { sessions, now: wed }).map(x => x.text).join('|'), /Against the NY bias ▼.*\+0\.3R: stop at the wick, first add at 102/);
   assert.match(positionNotes({ ...short, sl: 99.5 }, { sessions, now: wed })[1].text, /protected/);
   const sat = new Date(2026, 10, 7, 10);
-  assert.match(positionNotes(short, { sessions, now: sat }).at(-1).text, /^Weekend, in profit: consider adding on a pullback/);   // +1.5R
+  assert.match(positionNotes(short, { sessions, now: sat }).at(-1).text, /^Weekend, in profit: add on a dip/);   // +1.5R
   assert.match(positionNotes({ ...short, mark: 99.5 }, { sessions, now: sat }).at(-1).text, /^Weekend: hold your runner/);       // +0.25R
-  assert.match(positionNotes({ ...short, sl: 99.5 }, { sessions, now: sat }).at(-1).text, /consider adding/);                   // stop past entry, in profit
+  assert.match(positionNotes({ ...short, sl: 99.5 }, { sessions, now: sat }).at(-1).text, /add on a dip/);                   // stop past entry, in profit
   assert.match(positionNotes({ ...short, sl: 99.5, mark: 101 }, { sessions, now: sat }).at(-1).text, /hold your runner/);         // stop past entry, but underwater
   const thu = new Date(2026, 10, 5, 10);
-  assert.match(positionNotes(short, { sessions, now: thu }).at(-1).text, /^Thursday: the weekend is coming, consider leaving it open for a few days/);
+  assert.match(positionNotes(short, { sessions, now: thu }).at(-1).text, /^Thursday: weekend ahead, consider holding/);
   assert.doesNotMatch(positionNotes({ ...short, mark: 101 }, { sessions, now: thu }).map(x => x.text).join('|'), /Thursday/);   // underwater, stop at the wick
   assert.doesNotMatch(positionNotes(short, { sessions, now: wed }).map(x => x.text).join('|'), /Thursday/);
 });
@@ -297,12 +297,12 @@ test('position notes: BTC breaks its 4h high but the alt doesn’t, in the first
   assert.deepEqual(smtCheck(long, altWith, btc, t0 + 1), { state: 'watch', until: t0 + 3 * H4 });
   assert.equal(smtCheck({ ...long, openedAt: t0 - 2 * 60_000 }, altLag, btc, t0 + H4 + 1).state, 'diverged');   // entered just before the close
   const text = smt => positionNotes(long, { smt }).map(x => x.text).join('|');
-  assert.match(text({ state: 'diverged' }), /BTC broke its last 4h high but ETHFI didn’t, still at full risk: closing is reasonable/);
-  assert.match(text({ state: 'watch', until: t0 + 3 * H4 }), new RegExp(`Tip: until the ${String(new Date(t0 + 3 * H4).getHours()).padStart(2, '0')}:00 close, if BTC breaks its last 4h high and ETHFI doesn’t`));
+  assert.match(text({ state: 'diverged' }), /BTC broke its 4h high, ETHFI didn’t: closing is reasonable/);
+  assert.match(text({ state: 'watch', until: t0 + 3 * H4 }), /(^|\|)If SMT is present against BTC, closing early is reasonable(\||$)/);
   assert.doesNotMatch(positionNotes({ ...long, mark: 102.5 }, { smt: { state: 'diverged' } }).map(x => x.text).join('|'), /BTC broke/);   // past +1R: the plan's stops handle it
   assert.doesNotMatch(positionNotes({ ...long, sl: 100 }, { smt: { state: 'diverged' } }).map(x => x.text).join('|'), /BTC broke/);      // stop at entry
   const short = { ...long, dir: 'Short', sl: 102, mark: 99.8 };
-  assert.match(positionNotes(short, { smt: { state: 'watch', until: t0 } }).map(x => x.text).join('|'), /close, if BTC breaks its last 4h low/);
+  assert.match(positionNotes(short, { smt: { state: 'watch', until: t0 } }).map(x => x.text).join('|'), /If SMT is present against BTC, closing early is reasonable/);
 });
 
 test('playbook countdowns', async () => {
@@ -398,4 +398,112 @@ test('playbook read: New York in plain English, the bias, and what to look for',
   assert.match(lookingFor(r, { now: new Date(2026, 10, 7, 11) }).lines[0].text, /No new trades today/);           // Saturday
   assert.match(lookingFor(r, { now: new Date(2026, 10, 6, 11) }).lines.map(x => x.text).join('|'), /quarter size/);   // Friday
   assert.match(lookingFor({ ...r, dir: null }).lines[0].text, /Stand aside/);
+});
+
+test('candleShape: closed away from the level, body and wick engulfs, the 70% limit', async () => {
+  const { candleShape } = await import('../public/sfp.js');
+  const prev = { o: 100, h: 104, l: 96, c: 102 };
+  assert.equal(candleShape(prev, { o: 102, h: 106, l: 98, c: 99 }, 'Long').away, false);                    // a long on a red candle: at the level
+  const body = candleShape(prev, { o: 102, h: 103, l: 94, c: 103.5 }, 'Long');                              // green, past the body (102) but not the wick (104)
+  assert.deepEqual([body.away, body.engulf], [true, 'body']);
+  assert.ok(Math.abs(body.limit - (103 - 0.7 * 9)) < 1e-9);                                                 // 70% back toward the low wick
+  assert.equal(candleShape(prev, { o: 102, h: 105, l: 94, c: 104.5 }, 'Long').engulf, 'wick');
+  const sh = candleShape(prev, { o: 103, h: 108, l: 95, c: 95.5 }, 'Short');                                 // red, below the previous low
+  assert.deepEqual([sh.away, sh.engulf], [true, 'wick']);
+  assert.ok(Math.abs(sh.limit - (95 + 0.7 * 13)) < 1e-9);
+  assert.equal(candleShape(prev, { o: 101, h: 105, l: 100, c: 100.5 }, 'Short').engulf, null);               // red but not past the body
+});
+
+test('limitTrade: entry at the limit, R:R from it, missed when price runs or waits too long', async () => {
+  const { limitTrade, LIMIT_WAIT } = await import('../public/sfp.js');
+  const c = (h, l, cl = (h + l) / 2) => ({ t: 0, o: cl, h, l, c: cl });
+  const trade = { entry: 109, sl: 100, tp: 130, rr: 21 / 9, riskPct: 9 / 109, result: 'win', R: 21 / 9 };
+  const k = 0, mk = (...xs) => [c(110, 100, 109), ...xs].map((x, i) => ({ ...x, t: i * 14_400_000 }));
+  // long, limit at 103: R:R (130 − 103) / 3 = 9
+  const win = limitTrade(mk(c(108, 102.5), c(131, 104)), k, trade, false, 103);
+  assert.deepEqual([win.entry, win.result, +win.rr.toFixed(2)], [103, 'win', 9]);
+  assert.equal(limitTrade(mk(c(108, 99.5)), k, trade, false, 103).result, 'loss');                    // filled and stopped in one candle
+  assert.equal(limitTrade(mk(c(131, 104)), k, trade, false, 103).missed, 'ran');                       // went to the target without filling
+  assert.equal(limitTrade(mk(...Array.from({ length: LIMIT_WAIT + 1 }, () => c(110, 105))), k, trade, false, 103).missed, 'expired');
+  assert.equal(limitTrade(mk(c(110, 105)), k, trade, false, 103).pending, true);                       // still waiting
+});
+
+test('S and C+: an A grade that is a full swing failure with a golden R:R is S; an A grade that engulfed is C+', async () => {
+  const { tierOf, GRADE_ORDER } = await import('../public/sfp.js');
+  const { proposedRisk } = await import('../public/day-playbook.js');
+  assert.deepEqual(GRADE_ORDER.slice(0, 4), ['S+', 'A+', 'A++', 'A']);
+  const a = { grade: 'A++', why: 'with the NY bias ▲, BTC swept too' };
+  assert.equal(tierOf(a, { full: true, grr: true }).grade, 'S+');
+  assert.equal(tierOf(a, { full: true, grr: true }).from, 'A++');
+  const ap = { grade: 'A+', why: '4h RSI 36 (stretched)' };
+  assert.equal(tierOf(ap, { btcRsi: 'cool', rr: 12 }).grade, 'A+');                         // BTC cooled off is a tag (🧊), not a tier
+  assert.equal(tierOf(a, { btcRsi: 'cool', rr: 12 }).grade, 'A++');                         // only A+
+  assert.equal(tierOf(ap, { btcRsi: 'cool', rr: 12, full: true, grr: true }).grade, 'S+'); // both: S+
+  assert.equal(tierOf(a, { full: true, grr: false }), a);                                   // needs both
+  assert.equal(tierOf(a, { shape: { away: true, engulf: 'body' } }).grade, 'C+');            // an engulf: tracking
+  assert.equal(tierOf(a, { shape: { away: true, engulf: 'body' }, full: true, grr: true }).grade, 'S+');   // S+ comes first
+  assert.equal(tierOf({ grade: 'B', why: '' }, { full: true, grr: true }).grade, 'B');      // only A grades
+  const tue12 = new Date(2026, 10, 3, 12).getTime();
+  assert.equal(proposedRisk('S+', tue12, { from: 'A++' }).pct, proposedRisk('A++', tue12).pct);
+  assert.equal(proposedRisk('C+', tue12, { from: 'A' }).pct, 0);
+  assert.equal(proposedRisk('S', new Date(2026, 10, 7, 12).getTime(), { from: 'A' }).pct, 0);   // Saturday: skip, like its A
+});
+
+test('emaGuard: a short while BTC is above its 4h EMA100 is marked and gets no size', async () => {
+  const { emaGuard } = await import('../public/sfp.js');
+  const { proposedRisk } = await import('../public/day-playbook.js');
+  const a = { grade: 'A', why: '' };
+  assert.equal(emaGuard(a, 'Short', true).skip, 'ema');
+  assert.equal(emaGuard(a, 'Long', true), a);               // longs aren't touched
+  assert.equal(emaGuard(a, 'Short', false), a);             // BTC below its EMA100: a normal short
+  const tue12 = new Date(2026, 10, 3, 12).getTime();
+  assert.ok(proposedRisk('A', tue12).pct > 0);
+  assert.equal(proposedRisk('A', tue12, { skip: 'ema' }).pct, 0);
+});
+
+test('Golden R:R: an A grade with a 10–20R target within 10 ATR', async () => {
+  const { goldenRR, atrAt } = await import('../public/sfp.js');
+  const flat = Array.from({ length: 20 }, (_, i) => ({ t: i, o: 100, h: 101, l: 99, c: 100 }));
+  assert.equal(atrAt(flat, 15), 2);
+  assert.equal(atrAt(flat, 14), null);                                                    // not enough history
+  const t = (rr, dist) => ({ entry: 100, tp: 100 + dist, rr });
+  assert.equal(goldenRR('A+', t(15, 15), 2), true);                                        // 15R, target 7.5 ATR away
+  assert.equal(goldenRR('A+', t(15, 25), 2), false);                                       // target 12.5 ATR away: out of reach
+  assert.equal(goldenRR('A+', t(25, 15), 2), false);                                       // 20R and up: no
+  assert.equal(goldenRR('A+', t(8, 15), 2), false);                                        // under 10R: no
+  assert.equal(goldenRR('B', t(15, 15), 2), false);                                        // A grades (and S) only
+  assert.equal(goldenRR('S+', t(15, 15), 2), true);
+});
+
+test('fullSweep: the signal wick clears the swing candle’s own wick at the furthest level', async () => {
+  const { fullSweep } = await import('../public/sfp.js');
+  const candles = new Map([[1, { t: 1, o: 100, h: 104, l: 99, c: 102 }], [2, { t: 2, o: 101, h: 103, l: 98, c: 102 }]]);
+  const at = t => candles.get(t);
+  const short = { side: 'Short', high: 104.5, low: 99, levels: [{ price: 102, t: 1 }, { price: 101.5, t: 2 }] };
+  assert.equal(fullSweep(short, at), true);                                                   // 104.5 > 104 (the furthest level's swing wick)
+  assert.equal(fullSweep({ ...short, high: 103.5 }, at), false);                              // past the body (102), not the wick
+  const long = { side: 'Long', high: 103, low: 97.5, levels: [{ price: 101, t: 2 }] };
+  assert.equal(fullSweep(long, at), true);
+  assert.equal(fullSweep({ ...long, low: 98.5 }, at), false);
+});
+
+test('far target: at +7R the position hint says lock +3R, then +3R locked', async () => {
+  const { positionNotes } = await import('../public/day-playbook.js');
+  const plan = { entry: 100, sl: 99, tp: 120 };
+  const text = mark => positionNotes({ dir: 'Long', entry: 100, sl: 100, mark }, { plan, price: v => String(v) }).map(n => n.text).join('|');
+  assert.match(text(108), /Far target \(20R\), past \+7R: lock \+3R, stop to 103/);
+  assert.doesNotMatch(text(105), /Far target/);
+  assert.match(positionNotes({ dir: 'Long', entry: 100, sl: 103, mark: 108 }, { plan }).map(n => n.text).join('|'), /\+3R locked/);
+});
+
+test('the backtest locks +3R on a far target once +7R is reached', async () => {
+  const { walkSingle, scaledResult } = await import('../public/sfp.js');
+  const c = (t, o, h, l, cl) => ({ t, o, h, l, c: cl });
+  const candles = [c(0, 100, 100, 99, 100), c(1, 100, 107.5, 100, 107), c(2, 107, 107, 102.5, 103)];
+  const far = { entry: 100, sl: 99, tp: 120 }, near = { entry: 100, sl: 99, tp: 110 };
+  assert.deepEqual(walkSingle(candles, 1, far, false), { result: 'lock', R: 3, exitT: 2 });       // reached +7.5R, came back to 102.5
+  assert.equal(walkSingle(candles, 1, near, false), null);                                          // a 10R target: no lock, still open
+  const sc = scaledResult(candles, 0, { ...far, rr: 20, riskPct: 0.01 }, false);
+  assert.equal(sc.result, 'lock');
+  assert.ok(sc.R > 3);                                                                              // with both adds in, more than the first entry's +3R
 });

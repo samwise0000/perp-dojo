@@ -10,7 +10,7 @@ import { zonedToUtc, NY_TZ } from './bias.js';
 const AS_OF = '4 Nov 2026';
 const pct = v => `${+v.toFixed(2)}%`;
 const hh = h => `${String(h).padStart(2, '0')}:00`;
-const badge = g => `<span class="sig-grade g-${g.toLowerCase().replace(/\+/g, 'plus')}">${g === 'A++' ? '★ A++' : g}</span>`;
+const badge = g => `<span class="sig-grade g-${g.toLowerCase().replace(/\+/g, 'plus')}">${g === 'A++' ? '★ A++' : g === 'S+' ? '👑 S+' : g === 'C+' ? '🕯️ C+' : g}</span>`;
 const pairs = DEFAULT_PAIRS.split(' ').length;
 
 // today's NY session (8 AM – 5 PM New York) in the viewer's local time
@@ -123,9 +123,9 @@ function weekGrid() {
     if (i >= 0) {
       const q = SLOTS[d][i];
       if (q === 'skip') return ['off', 'Skip', 'no new trades, hold runners'];
-      const full = `A++ ${pct(RISK_PCT['A++'])} · A+ ${pct(RISK_PCT['A+'])} · A ${pct(RISK_PCT.A)}`;
-      if (q === 'caution') return ['caution', 'Caution', `best A-grade only · A++ ${pct(RISK_PCT['A++'] * CAUTION.share)} · A+ / A ${pct(RISK_PCT.A * CAUTION.share)}`];
-      return q === 'weak' ? ['weak', 'Weak', 'A++ / A+ / A at half size'] : q === 'prime' ? ['prime', 'Prime', full] : ['ok', 'OK', full];
+      const full = `A+ ${pct(RISK_PCT['A+'])} · A++ ${pct(RISK_PCT['A++'])} · A ${pct(RISK_PCT.A)}`;
+      if (q === 'caution') return ['caution', 'Caution', `best A-grade only · A+ / A++ ${pct(RISK_PCT['A+'] * CAUTION.share)} · A ${pct(RISK_PCT.A * CAUTION.share)}`];
+      return q === 'weak' ? ['weak', 'Weak', 'A+ / A++ / A at half size'] : q === 'prime' ? ['prime', 'Prime', full] : ['ok', 'OK', full];
     }
     // a late close counts on the weekday it closes: 20:00 is the same day, 00:00 and 04:00 the next
     const day = h === 20 ? d : (d + 1) % 7;
@@ -141,12 +141,15 @@ function weekGrid() {
 
 // ---------- grades ----------
 const GRADES = [
-  { g: 'A++', title: 'Everything lines up', checks: [1, 1, 1, null], alt: [1, 0, 0, 1],
-    means: 'The setup goes the same way as yesterday’s New York session, today’s session isn’t running, and BTC printed its own swing failure in the same direction on the same 4h candle. The whole market is rejecting the same way at the same moment.',
-    trade: () => `Full plan at ${pct(RISK_PCT['A++'])} on the main closes Mon–Thu (half at Thursday 16:00). The thinnest sample of the A grades (19 trades on 4 days): it’s on top for what it is, the whole market reversing together, and the forward test will say if it earns it. Not at the late closes (⛔): there it made +0.23R a trade.<br><br>The second form, <b>🌃 Late A++</b>: with the bias while New York is open, no BTC sweep, and the 4h RSI stretched, at the 00:00 and 04:00 closes Mon–Thu, at ${pct(LATE_APP_PCT)} (+1.69R a trade on 135 over the year, positive in both halves). At 20:00 it lost (⛔). When it also fades a violent NY session it’s the 🌊 NY fade instead.` },
+  { g: 'S+', title: 'Full swing failure, golden R:R', checks: [1, null, null, null],
+    means: 'An A++, A+ or A that’s both a 💥 full swing failure and a ⭐ golden R:R. Full: the wick ran past the swing candle’s own wick, not just its body, so it took the stops beyond the visible extreme. Golden R:R: the target is 10–20R from the close but within 10 times the coin’s average 4h range, so it pays well and is still reachable.',
+    trade: () => 'Full plan, sized as the A grade under it, at its closes. Over 5 years (35 pairs, at plan times, shorts above BTC’s 4h EMA100 left out) it made +3.34R a trade on 53, +1.39R without the best 3, positive in 3 of 5 years. About 10 a year. The alerts mark it 👑, with the 💥 and ⭐ lines.' },
   { g: 'A+', title: 'With the bias, stretched', checks: [1, 1, 0, 1],
     means: `With yesterday’s NY bias, today’s session isn’t running, BTC didn’t sweep, and the pair’s 4h RSI(14) is stretched the trade’s way: under ${BPLUS_RSI} for a long, over ${100 - BPLUS_RSI} for a short. The move into the level has run far enough that the failure tends to stick. The best zone is 30–40 (60–70 for shorts).`,
-    trade: () => `Full plan at ${pct(RISK_PCT['A+'])} on the main closes Mon–Thu (half at Thursday 16:00). Not at the late closes: there it lost (⛔).` },
+    trade: () => `Full plan at ${pct(RISK_PCT['A+'])} on the main closes Mon–Thu (half at Thursday 16:00). The best A grade over 5 years (+0.55R a trade, 4 of 5 years up), so it ranks first of the A grades. Not at the late closes: there it lost (⛔).` },
+  { g: 'A++', title: 'Everything lines up', checks: [1, 1, 1, null], alt: [1, 0, 0, 1],
+    means: 'The setup goes the same way as yesterday’s New York session, today’s session isn’t running, and BTC printed its own swing failure in the same direction on the same 4h candle. The whole market is rejecting the same way at the same moment.',
+    trade: () => `Full plan at ${pct(RISK_PCT['A++'])} on the main closes Mon–Thu (half at Thursday 16:00), ranked below A+. It looked best in the first year (19 trades), but over 5 years the main-close A++ lost (−0.32R a trade on 47), so it no longer gets the 2% it used to. Not at the late closes (⛔): there it made +0.23R a trade.<br><br>The second form, <b>🌃 Late A++</b>: with the bias while New York is open, no BTC sweep, and the 4h RSI stretched, at the 00:00 and 04:00 closes Mon–Thu, at ${pct(LATE_APP_PCT)} (+1.69R a trade on 135 over the year, positive in both halves). At 20:00 it lost (⛔). When it also fades a violent NY session it’s the 🌊 NY fade instead.` },
   { g: 'A', title: 'With the bias', checks: [1, 1, 0, 0], alt: [1, 0, 1, null],
     means: 'With yesterday’s NY bias while today’s session is closed, but neither BTC sweeping with it nor a stretched RSI backs it up. Or: with the bias while the session is open and BTC swept the same way, which confirms the bias is still alive (at 00:00 that’s the 🌙 Midnight sweep).',
     trade: () => `Full plan at ${pct(RISK_PCT.A)} on the main closes Mon–Thu (half at Thursday 16:00). At the late closes only as the <b>🌙 Midnight sweep</b>: an A where BTC swept the same way while New York trades, at the 00:00 close, Mon–Thu, at ${pct(OFF_HOURS_PCT)} (+2.64R a trade over 7 days in the backtest, positive in both halves; thin, so tracking size).` },
@@ -159,6 +162,9 @@ const GRADES = [
   { g: 'C++', title: 'Fading a violent NY session', checks: [0, null, null, null],
     means: 'A C setup at the 4h close in the last 2 hours of the NY session (04:00 your time) that goes against BTC’s session move, when BTC has moved 2%+ since the NY open and sits near its session high or low. Late in the session the move is usually done; the same fade mid-session loses.',
     trade: () => 'Tracking only, no size. Tracked with fixed targets at 2R and 3R (first entry, no adds): in the backtest those were steadier than the plan, positive in both halves and without the best trades. The alerts flag it 🌊 and show both prices.' },
+  { g: 'C+', title: 'An A grade that engulfed', checks: [1, null, null, null],
+    means: 'An A++, A+ or A whose signal candle also engulfed the candle before it: it closed past that candle’s body or its wick. The rejection is strong, but the candle has already run far from the level, so entering at its close leaves little room.',
+    trade: () => 'Tracking only, no size. If you take one, use a limit 70% of the candle back toward the wick (the 🕯️ line), stop behind the wick, cancel after 24h or if the target trades first. It was S until the current plan’s numbers: +2.47R a trade on 29 filled, but −0.73R without the best 3.' },
   { g: 'C', title: 'Against the bias', checks: [0, null, null, null],
     means: 'Against yesterday’s NY bias, or no bias to go by. Before fees these break even; after fees they lose. Every filter tried on top failed to rescue them.',
     trade: () => 'Mostly avoid. They stay logged in Signals and the alerts, so you can spot something the grade misses.' },
@@ -167,6 +173,7 @@ const GRADES = [
 // full plan with adds unless a fixed target is named, after fees; Mon–Thu by the
 // close's day in UTC+8). take: 'yes' | 'track' (tracking size or none) | 'no'.
 const SETUPS = [
+  { grades: ['S+'], name: '👑 S+', when: 'Where its A grade is taken (main closes, Mon–Thu…)', risk: () => 'as its A grade', c: [1, null, null, null, null], take: 'yes', n: 53, days: 46, avg: 3.34, total: 177, wo: 69, prof: 25, how: '5 years on 35 long-lived pairs, unlike the other rows (past year): a full swing failure with a golden R:R, shorts above BTC’s 4h EMA100 left out.' },
   { grades: ['A++'], name: '★ A++', when: 'Main closes, Mon–Thu', risk: () => pct(RISK_PCT['A++']), c: [1, 1, 1, null, null], take: 'yes', n: 19, days: 4, avg: 3.24, total: 62, wo: 9, prof: 84, how: 'Full plan: adds at +1R and +2R, hold to the opposing level.' },
   { grades: ['A++'], name: '★ A++ · 🌃 Late A++', when: '00:00 / 04:00, Mon–Thu, NY open, RSI stretched', c: [1, 0, 0, 1, 0], risk: () => pct(LATE_APP_PCT), take: 'yes', n: 135, days: 54, avg: 1.69, total: 228, wo: 125, prof: 36, how: 'Full plan at half a percent. What used to be B+.' },
   { grades: ['A+'], name: 'A+', when: 'Main closes, Mon–Thu', risk: () => `${pct(RISK_PCT['A+'])} (½ on Thu 16:00)`, c: [1, 1, 0, 1, null], take: 'yes', n: 229, days: 96, avg: 2.70, total: 619, wo: 297, prof: 35, how: 'Full plan. The best-proven setup: the core of the strategy.' },
@@ -183,6 +190,7 @@ const SETUPS = [
   { grades: ['A+', 'A'], name: 'A+ / A', when: 'Other late closes (20:00, 04:00, 00:00 without a BTC sweep)', wrongTime: true, c: [1, null, null, null, null], risk: () => 'skip', take: 'no', n: 118, days: 48, avg: -0.33, total: -39, wo: -67, prof: 37, how: 'Outside the main closes an A needs BTC sweeping with it.' },
   { grades: ['A++'], name: '★ A++ · 🌃 Late A++', when: '20:00, Mon–Thu, NY open, RSI stretched', wrongTime: true, c: [1, 0, 0, 1, 0], risk: () => 'skip', take: 'no', n: 48, days: 35, avg: -0.62, total: -30, wo: -34, prof: 33, how: 'Lost in both halves: right at the NY open the move isn’t done.' },
   { grades: ['B'], name: 'B', when: 'Any close', c: [1, 0, 0, 0, null], risk: () => 'monitor', take: 'no', n: 264, days: 130, avg: -0.24, total: -64, wo: -90, prof: 32, how: 'The bias may be going stale and nothing backs it up.' },
+  { grades: ['C+'], name: '🕯️ C+', when: 'An A grade whose candle engulfed: a limit 70% back', c: [1, null, null, null, null], risk: () => 'tracking', take: 'track', n: 29, days: 21, avg: 2.47, total: 72, wo: -19, prof: 31, how: '5 years on 35 long-lived pairs, at plan times, EMA100 shorts left out. A few big wins carry it.' },
   { grades: ['C'], name: 'C', when: 'Any close', c: [0, null, null, null, 0], risk: () => 'avoid', take: 'no', n: 2299, days: 333, avg: -0.12, total: -272, wo: -519, prof: 26, how: 'Against yesterday’s NY bias: break-even before fees, a loss after.' },
   { grades: ['C'], name: 'C', when: 'Main closes, Mon–Thu', c: [0, null, null, null, 0], risk: () => 'avoid', take: 'no', n: 755, days: 157, avg: -0.22, total: -164, wo: -282, prof: 27, how: 'Even at the best closes.' },
 ];
@@ -348,8 +356,8 @@ export function renderStrategy(root) {
     <div class="kicker">7 · Risk</div>
     <h2>Size by grade</h2>
     <div class="table-wrap"><table class="data compact st-risk-t"><thead><tr><th>Grade</th><th>Main closes, Mon–Thu</th><th>Weak: Thu 16:00</th><th>Caution: Friday</th><th>Late closes (Mon–Thu)</th></tr></thead><tbody>
-      <tr><td>${badge('A++')}</td><td>${pct(RISK_PCT['A++'])}</td><td>${pct(RISK_PCT['A++'] / 2)}</td><td>${pct(RISK_PCT['A++'] * CAUTION.share)}</td><td>${pct(LATE_APP_PCT)} as 🌃 Late A++ (00:00 / 04:00)</td></tr>
       <tr><td>${badge('A+')}</td><td>${pct(RISK_PCT['A+'])}</td><td>${pct(RISK_PCT['A+'] / 2)}</td><td>${pct(RISK_PCT['A+'] * CAUTION.share)}</td><td>— (⛔)</td></tr>
+      <tr><td>${badge('A++')}</td><td>${pct(RISK_PCT['A++'])}</td><td>${pct(RISK_PCT['A++'] / 2)}</td><td>${pct(RISK_PCT['A++'] * CAUTION.share)}</td><td>${pct(LATE_APP_PCT)} as 🌃 Late A++ (00:00 / 04:00)</td></tr>
       <tr><td>${badge('A')}</td><td>${pct(RISK_PCT.A)}</td><td>${pct(RISK_PCT.A / 2)}</td><td>${pct(RISK_PCT.A * CAUTION.share)}</td><td>${pct(OFF_HOURS_PCT)} at 00:00 as the 🌙 Midnight sweep</td></tr>
       <tr><td>${badge('B+')} 🌊</td><td>—</td><td>—</td><td>—</td><td>${pct(OFF_HOURS_PCT)} at 04:00</td></tr>
       <tr><td>${badge('B')}</td><td>—</td><td>—</td><td>—</td><td>monitor</td></tr>

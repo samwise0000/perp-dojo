@@ -8,7 +8,7 @@
 // 16:00 closes, never between closes. The other closes (20:00, 00:00, 04:00)
 // broke even or lost once a few outliers were removed.
 import { NY_PULLBACK } from './bias.js';
-import { btcRsiTag } from './sfp.js';
+import { btcRsiTag, FAR_LOCK } from './sfp.js';
 
 const DAYS = [
   // [verdict, avg R, win rate, share of days with an A-grade setup, one line]
@@ -54,7 +54,9 @@ export const picksAt = closeAt => (slotAt(closeAt) === 'caution' ? CAUTION.picks
 // Risk per trade, % of account equity, by grade. Half on a weak close; nothing
 // outside the trading day. Change the numbers here.
 // A+ stays at A's 1% until the forward test has ~50 A+ trades: at 1.5% it added ~14 points of drawdown.
-export const RISK_PCT = { 'A++': 2, 'A+': 1, A: 1, 'B+': 0.5, B: 0.5, 'C++': 0, C: 0 };
+// Over 5 years (35 long-lived pairs, current plan) A+ was the best A grade (+0.55R a trade, 4 of 5 years up),
+// the A++ at the main closes lost (−0.32R on 47) and A was close to flat (+0.12R): so A+ and A++ 1%, A ½%.
+export const RISK_PCT = { 'A++': 1, 'A+': 1, A: 0.5, 'B+': 0.5, B: 0.5, 'C++': 0, 'C+': 0, C: 0 };
 // Outside the trading day, Monday to Thursday's late closes take only the 🌃 Late A++
 // (NY open, RSI stretched) at 00:00 and 04:00 at half a percent (+1.69R a trade on 135;
 // −0.62R at 20:00, so not there), and at a quarter percent the 🌊 NY fade (B+) and the
@@ -79,11 +81,14 @@ export function setupName(grade, closeAt, tag) {
 // The proposed risk for a setup whose 4h candle closes at `closeAt` (ms):
 // { pct, slot, why } with slot 'prime' | 'ok' | 'weak' | 'caution' | 'skip' | null (outside hours).
 // tag: the grade's tag ('midnight' for the Midnight sweep), optional.
-export function proposedRisk(grade, closeAt, { tag = null } = {}) {
+export function proposedRisk(grade, closeAt, { tag = null, from = null, skip = null } = {}) {
+  if (skip === 'ema') { const t = new Date(closeAt), i = SESSION.indexOf(t.getHours()); return { pct: 0, slot: i < 0 || t.getMinutes() ? null : SLOTS[t.getDay()][i], why: 'a short while BTC is above its 4h EMA100: skip (those shorts lost in every one of 5 years)' }; }
+  // S tier: a full swing failure with a golden R:R on an A grade, sized as that A grade, at the same closes
+  if (grade === 'S+') { const r = proposedRisk(from || 'A', closeAt, { tag }); return { ...r, why: r.pct ? `S+ tier (${from || 'an A grade'}, full swing failure + golden R:R): sized as ${from || 'A'}, ${r.why.replace(/^grade \S+ /, '')}` : r.why }; }
   const t = new Date(closeAt), i = SESSION.indexOf(t.getHours());
   const slot = i < 0 || t.getMinutes() ? null : SLOTS[t.getDay()][i];
   const base = RISK_PCT[grade] ?? 0;
-  if (!base) return { pct: 0, slot, why: grade === 'C++' ? 'grade C++ (a NY fade): tracking only, no size' : `grade ${grade}: skip` };
+  if (!base) return { pct: 0, slot, why: grade === 'C++' ? 'grade C++ (a NY fade): tracking only, no size' : grade === 'C+' ? 'grade C+ (an A grade whose candle engulfed): tracking only, no size, a limit 70% back' : `grade ${grade}: skip` };
   if (!slot) {
     const h = t.getHours(), late = !t.getMinutes() && OFF_HOURS.includes(h);
     // Thursday and Friday nights' 00:00 and 04:00 (Friday's and Saturday's dates): the late setups, trade-cautiously.
@@ -233,6 +238,9 @@ export { countdown as pbCountdown, hh as pbHour, r as pbR, sessDay as pbSessDay,
 export function strategiesToday(now = new Date()) {
   const d = now.getDay(), at = (h, plus = 0) => { const t = new Date(now); t.setDate(t.getDate() + plus); t.setHours(h, 0, 0, 0); return t.getTime(); };
   const out = [], mains = SESSION.filter((h, i) => SLOTS[d][i] !== 'skip');
+  // S: an A grade that's a full swing failure with a golden R:R, sized as its A grade, wherever the A grades are taken
+  const sBy = mains.map(h => [h, proposedRisk('A', at(h))]).filter(([, r]) => r.pct > 0);
+  if (sBy.length) out.push({ name: 'S+', what: 'full swing failure + golden R:R', pct: 'as its A', note: '', size: 'as its A grade', caution: sBy.every(([, r]) => r.slot === 'caution') });
   for (const [g, name, what] of [['A++', '★ A++', 'BTC swept the same way'], ['A+', 'A+', 'alt’s 4h RSI stretched'], ['A', 'A', 'with the bias']]) {
     const by = mains.map(h => [h, proposedRisk(g, at(h))]).filter(([, r]) => r.pct > 0);
     if (!by.length) continue;
@@ -259,7 +267,7 @@ export function guidelines({ equity = null, hidden = false, money = v => `$${Mat
   const guide = [
     ['🎯', 'Entry', 'At the 4h close · stop at the wick · target the opposing level'],
     ['➕', 'Scale in', '+1R: add 1×, stops → entry · +2R: add ½×, stops → break-even'],
-    ['📏', 'Risk', `A++ ${pctText(RISK_PCT['A++'])}${usd('A++')} · A+ / A ${pctText(RISK_PCT.A)}${usd('A')} · half on Weak, ¼ on Caution`],
+    ['📏', 'Risk', `A+ / A++ ${pctText(RISK_PCT['A+'])}${usd('A+')} · A ${pctText(RISK_PCT.A)}${usd('A')} · half on Weak, ¼ on Caution`],
     ['🔢', 'Limits', `${PICKS_PER_CLOSE} new a close (1 on Caution) · ${MAX_POSITIONS} open · best grade, then R:R`],
     ['🌙', 'Late', `00:00 / 04:00, Sun–Wed nights: 🌃 Late A++ ${pctText(LATE_APP_PCT)} · 🌙 / 🌊 ${pctText(OFF_HOURS_PCT)} · Thu–Fri nights ¼`],
     ['🚫', 'Never', 'Average down · take profit early · widen a stop · trade C'],
@@ -292,7 +300,6 @@ export function smtCheck(p, alt4h, btc4h, now = Date.now()) {
   return null;                                                           // the window passed without it
 }
 
-const hhmm = ms => { const d = new Date(ms); return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`; };
 const coinOf = s => String(s || '').replace(/USDT$/, '');
 // Notes for a live position, from what the backtest found:
 //   - the NY bias now vs the position (with it: hold; flipped your way since
@@ -301,53 +308,61 @@ const coinOf = s => String(s || '').replace(/USDT$/, '');
 //   - Friday to Sunday: hold runners through the weekend
 // p: { dir, entry, mark, sl, slLoss, openedAt }; sessions: newest first, as nySessions returns.
 // smt: smtCheck's answer for this position, when the app has read its 4h candles.
-export function positionNotes(p, { sessions = [], now = new Date(), price = v => String(v), equity = null, smt = null } = {}) {
+export function positionNotes(p, { sessions = [], now = new Date(), price = v => String(v), equity = null, smt = null, plan = null } = {}) {
   const notes = [], long = p.dir === 'Long', side = long ? 'bullish' : 'bearish', d = long ? 1 : -1;
   const done = (sessions || []).filter(x => !x.live && !x.missing && x.bias);
   const nowBias = done[0]?.bias || null;
   const atEntry = p.openedAt ? done.find(x => x.end <= p.openedAt)?.bias || null : null;
   const mark = b => (b === 'bullish' ? '▲' : b === 'bearish' ? '▼' : '');
   if (nowBias && nowBias !== 'flat') {
-    if (nowBias === side && atEntry && atEntry !== side) notes.push({ cls: 'pos', text: `NY flipped your way since entry ${mark(nowBias)}: keep holding` });
+    if (nowBias === side && atEntry && atEntry !== side) notes.push({ cls: 'pos', text: `NY flipped your way ${mark(nowBias)}: keep holding` });
     else if (nowBias === side) notes.push({ cls: 'pos', text: `With the NY bias ${mark(nowBias)}: hold to the plan` });
-    else notes.push({ cls: 'warn', text: `Against the NY bias ${mark(nowBias)}: weaker odds, consider tightening or closing` });
+    else notes.push({ cls: 'warn', text: `Against the NY bias ${mark(nowBias)}: consider tightening or closing` });
   }
   if (sessions?.[0]?.live && !sessions[0].pending) notes.push({ cls: 'muted', text: 'NY session open: the bias can change at its close' });
   if (p.sl && p.entry && p.mark) {
     const risk = d * (p.entry - p.sl);
-    if (risk <= 0) notes.push({ cls: 'pos', text: 'Stop at or past entry: protected, hold to the target' });
+    if (risk <= 0) notes.push({ cls: 'pos', text: 'Stop at or past entry: protected, hold to target' });
     else {
       const r = d * (p.mark - p.entry) / risk, at = n => price(p.entry + d * n * risk);
       const rs = `${r >= 0 ? '+' : '−'}${Math.abs(r).toFixed(1)}R`;
-      if (r >= 2) notes.push({ cls: 'pos', text: `${rs}: past +2R, add half size and move all stops to break-even` });
-      else if (r >= 1) notes.push({ cls: 'pos', text: `${rs}: past +1R, add the same size and move all stops to entry. Next at ${at(2)} (+2R)` });
+      if (r >= 2) notes.push({ cls: 'pos', text: `${rs}: add half size, all stops to break-even` });
+      else if (r >= 1) notes.push({ cls: 'pos', text: `${rs}: add the same size, stops to entry. Next add ${at(2)}` });
       else notes.push({ cls: '', text: `${rs}: stop at the wick, first add at ${at(1)} (+1R)` });
       // still at full risk in the first 3 candles: does the alt keep up with BTC? (smtCheck)
-      if (r < 1 && smt?.state === 'diverged') notes.push({ cls: 'warn', text: `BTC broke its last 4h ${long ? 'high' : 'low'} but ${coinOf(p.symbol)} didn’t, still at full risk: closing is reasonable` });
-      else if (r < 1 && smt?.state === 'watch') notes.push({ cls: 'muted', text: `Tip: until the ${hhmm(smt.until)} close, if BTC breaks its last 4h ${long ? 'high' : 'low'} and ${coinOf(p.symbol)} doesn’t, closing is reasonable` });
+      if (r < 1 && smt?.state === 'diverged') notes.push({ cls: 'warn', text: `BTC broke its 4h ${long ? 'high' : 'low'}, ${coinOf(p.symbol)} didn’t: closing is reasonable` });
+      else if (r < 1 && smt?.state === 'watch') notes.push({ cls: 'muted', text: 'If SMT is present against BTC, closing early is reasonable' });
     }
   }
   // hold time: most stops come within 8h; trades that last longer are the ones that reach the target
   const held = p.openedAt ? (now.getTime() - p.openedAt) / 3_600_000 : null;
   const up = p.sl && d * (p.entry - p.sl) > 0 ? d * (p.mark - p.entry) / (d * (p.entry - p.sl)) >= 0.25 : d * (p.mark - p.entry) > 0;   // clearly in profit
-  if (held !== null && held >= 8 && p.mark && up) notes.push({ cls: 'pos', text: `Held ${held >= 48 ? Math.round(held / 24) + 'd' : Math.round(held) + 'h'} and in profit: past the usual stop-out window, let it run` });
-  // size against the plan (A and A+ 1%, A++ 2% of equity on the first entry)
+  if (held !== null && held >= 8 && p.mark && up) notes.push({ cls: 'pos', text: `Held ${held >= 48 ? Math.round(held / 24) + 'd' : Math.round(held) + 'h'}, in profit: past the stop-out window, let it run` });
+  // size against the plan's largest first entry (RISK_PCT)
   if (equity && p.slLoss < 0 && d * (p.entry - p.sl) > 0) {
     const pct = -p.slLoss / equity * 100;
-    if (pct > RISK_PCT['A++'] * 1.25) notes.push({ cls: 'warn', text: `Risking ${pct.toFixed(1)}% of equity to the stop: the plan's most is ${RISK_PCT['A++']}% (A++)` });
+    const max = Math.max(...Object.values(RISK_PCT));
+    if (pct > max * 1.25) notes.push({ cls: 'warn', text: `Risking ${pct.toFixed(1)}% to the stop: the plan’s max is ${max}%` });
   }
   // Thursday, working (in profit, or the stop at/past entry): the last weekday before the weekend, when
   // runners have days to go. Trades still open into the weekend averaged +15.7R in the backtest.
   if (now.getDay() === 4 && p.mark && p.entry && (d * (p.mark - p.entry) > 0 || (p.sl && d * (p.entry - p.sl) <= 0)))
-    notes.push({ cls: 'pos', text: 'Thursday: the weekend is coming, consider leaving it open for a few days' });
+    notes.push({ cls: 'pos', text: 'Thursday: weekend ahead, consider holding it a few days' });
   // into the weekend in profit (+1R or better, or stop already at/past entry): runners held over it
   // tended to keep going, and an add that risked 1R to the existing stop made money in the backtest
   if ([5, 6, 0].includes(now.getDay())) {
     const risk = p.sl && p.entry ? d * (p.entry - p.sl) : null, r = risk > 0 && p.mark ? d * (p.mark - p.entry) / risk : null;
     const ahead = p.mark && d * (p.mark - p.entry) > 0 && (r === null ? risk !== null : r >= 1);
     notes.push(ahead
-      ? { cls: 'pos', text: 'Weekend, in profit: consider adding on a pullback. Size it to risk 1R to your current stop, and don’t move the stop up for it' }
-      : { cls: 'muted', text: 'Weekend: hold your runner, don’t close for the weekend' });
+      ? { cls: 'pos', text: 'Weekend, in profit: add on a dip, 1R to your current stop' }
+      : { cls: 'muted', text: 'Weekend: hold your runner, don’t close it for the weekend' });
+  }
+  // 🛡️ a far target (15R+ from the entry, by the original plan): at +7R, lock +3R
+  if (plan && p.mark) {
+    const r0 = Math.abs(plan.entry - plan.sl), rr = r0 ? Math.abs(plan.tp - plan.entry) / r0 : 0, now0 = r0 ? d * (p.mark - plan.entry) / r0 : 0, lock = plan.entry + d * FAR_LOCK.to * r0;
+    if (rr >= FAR_LOCK.rr && now0 >= FAR_LOCK.at) notes.push(p.sl && d * (p.sl - lock) >= 0
+      ? { cls: 'pos', text: `Far target (${Math.round(rr)}R): +3R locked, let it run` }
+      : { cls: 'warn', text: `Far target (${Math.round(rr)}R), past +7R: lock +3R, stop to ${price(lock)}` });
   }
   return notes;
 }

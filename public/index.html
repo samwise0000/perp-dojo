@@ -699,18 +699,34 @@
           </div>
         </div>
         <div id="sigResults" class="c12 grid sig-results">
-        <dl id="sigSummary" class="c12 sfp-summary"></dl>
+        <div id="sigSummary" class="card c12 sig-sum"></div>
         <div class="card c12">
           <div class="card-row">
             <div class="kicker" id="sigCount"></div>
             <div class="sig-filters">
-              <select id="sigPair" aria-label="Pair"></select>
-              <select id="sigSide" aria-label="Side"><option value="all">Longs and shorts</option><option value="Long">Longs</option><option value="Short">Shorts</option></select>
               <div id="sigGradeF" class="grade-checks" role="group" aria-label="Grades"></div>
-              <select id="sigTrendF" aria-label="BTC trend"><option value="all">Any BTC trend</option><option value="aligned">Aligned with BTC</option><option value="counter">Countertrend</option><option value="neutral">BTC neutral</option></select>
-              <select id="sigMode" aria-label="Results" title="Results with the scaling plan (adds at +1R and +2R, stops to entry, then break-even) or the first entry alone"><option value="adds">With adds</option><option value="first">First entry only</option></select>
+              <div class="sig-more">
+                <button id="sigFiltBtn" class="btn sig-filt-btn" type="button" aria-expanded="false" aria-controls="sigFiltPanel"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M7 12h10M10 18h4"/></svg>Filters<b id="sigFiltN" hidden></b></button>
+                <div id="sigFiltPanel" class="sig-filt-panel" role="group" aria-label="Filters" hidden>
+                  <label><span>Pair</span><select id="sigPair"></select></label>
+                  <label><span>Side</span><select id="sigSide"><option value="all">Longs and shorts</option><option value="Long">Longs</option><option value="Short">Shorts</option></select></label>
+                  <label><span>BTC trend</span><select id="sigTrendF"><option value="all">Any BTC trend</option><option value="aligned">Aligned with BTC</option><option value="counter">Countertrend</option><option value="neutral">BTC neutral</option></select></label>
+                  <label title="✨ BTC in golden zone / NY pullback, tagged at the 12:00 and 16:00 closes"><span>Golden zone</span><select id="sigGoldF"><option value="all">Any zone</option><option value="in">✨ Golden zone</option><option value="out">Not golden zone</option></select></label>
+                  <label title="BTC's 1h RSI at the close, read the trade's way. Tagged on setups with the NY bias (not C grades)"><span>BTC 1h RSI</span><select id="sigRsiF"><option value="all">Any RSI</option><option value="cool">🧊 Cooled off (35–45)</option><option value="chase">⚠️ Extended (60+)</option><option value="deep">⚠️ BTC oversold / overbought</option><option value="warn">⚠️ Either warning</option><option value="none">No RSI tag</option></select></label>
+                  <label title="💥 Full swing failure: the wick also went past the swing candle's own wick, not just its body"><span>Sweep</span><select id="sigFullF"><option value="all">Any sweep</option><option value="full">💥 Full swing failure</option><option value="body">Body only</option></select></label>
+                  <label title="⭐ Golden R:R: an A grade with a 10–20R target from the close, within 10 times the coin's average 4h range. Tracking only"><span>R:R</span><select id="sigGrrF"><option value="all">Any R:R</option><option value="in">⭐ Golden R:R</option><option value="out">Not golden R:R</option></select></label>
+                  <label title="Shorts while BTC is above its 4h EMA100: shown, but the plan gives them no size (they lost in every one of 5 years)"><span>BTC EMA100</span><select id="sigEmaF"><option value="all">All signals</option><option value="hide">Hide ⚠️ shorts above it</option><option value="only">Only ⚠️ shorts above it</option></select></label>
+                  <label title="The named setups tracked inside a grade, where the plan takes them"><span>Setup</span><select id="sigSetupF"><option value="all">Any setup</option><option value="🌃 Late A++">🌃 Late A++</option><option value="🌙 Midnight sweep">🌙 Midnight sweep</option><option value="🌊 NY fade">🌊 NY fade</option><option value="none">None of these</option></select></label>
+                  <label title="The signal candle: closed at the level (against the trade's colour), or already away from it, and whether it engulfed the previous candle"><span>Candle</span><select id="sigShapeF"><option value="all">Any candle</option><option value="at">At the level</option><option value="away">🕯️ Closed away (all)</option><option value="plain">🕯️ Away, no engulf</option><option value="engulf">🕯️ Any engulf</option><option value="body">🕯️ Body engulf</option><option value="wick">🕯️ Wick engulf</option></select></label>
+                  <label title="Results with the scaling plan (adds at +1R and +2R, stops to entry, then break-even) or the first entry alone"><span>Results</span><select id="sigMode"><option value="adds">With adds</option><option value="first">First entry only</option></select></label>
+                  <div id="sigWrongSlot"></div>
+                  <button id="sigFiltReset" class="sig-filt-reset" type="button">Reset filters</button>
+                </div>
+              </div>
+              <div id="sigFiltChips" class="sig-filt-chips"></div>
             </div>
           </div>
+          <div id="sigView" class="sig-view" aria-live="polite"></div>
           <div class="table-wrap"><table id="sigTable" class="data"></table></div>
           <button id="sigMore" class="btn more" type="button" hidden></button>
         </div>

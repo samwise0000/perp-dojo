@@ -166,15 +166,24 @@ export function tradePlan(candles, k, short, levels, swingList) {
   const rr = Math.abs(entry - tp) / risk;
   const plan = { entry, sl, tp, tpT: target.t, rr, riskPct: risk / entry, result: 'open', R: null, exitT: null };
   const scaled = scaledResult(candles, k, plan, short);
-  for (let j = k + 1; j < candles.length; j++) {
-    const x = candles[j];
-    const stopped = short ? x.h >= sl : x.l <= sl, hit = short ? x.l <= tp : x.h >= tp;
-    if (stopped) return { ...plan, result: 'loss', R: -1, exitT: x.t, scaled };
-    if (hit) return { ...plan, result: 'win', R: rr, exitT: x.t, scaled };
-  }
+  const end = walkSingle(candles, k + 1, plan, short);
+  if (end) return { ...plan, ...end, scaled };
   // still open: where it stands at the last close, in R
   const last = candles.at(-1);
   return { ...plan, R: k < candles.length - 1 ? (short ? entry - last.c : last.c - entry) / risk : 0, scaled };
+}
+// One entry from candle `from` on: the stop, the target, or (a far target, 15R+) the 🛡️ lock at +3R once
+// +7R was reached, from the next candle on. A candle that touches both counts as the stop. null: still open.
+export function walkSingle(candles, from, { entry, sl, tp }, short) {
+  const d = short ? -1 : 1, risk = Math.abs(entry - sl), far = risk > 0 && Math.abs(tp - entry) / risk >= FAR_LOCK.rr;
+  let stop = sl, locked = false;
+  for (let j = from; j < candles.length; j++) {
+    const x = candles[j];
+    if (d * ((short ? x.h : x.l) - stop) <= 0) return locked ? { result: 'lock', R: FAR_LOCK.to, exitT: x.t } : { result: 'loss', R: -1, exitT: x.t };
+    if (d * ((short ? x.l : x.h) - tp) >= 0) return { result: 'win', R: Math.abs(tp - entry) / risk, exitT: x.t };
+    if (far && !locked && d * ((short ? x.l : x.h) - entry) >= FAR_LOCK.at * risk) { locked = true; stop = entry + d * FAR_LOCK.to * risk; }
+  }
+  return null;
 }
 
 // Bybit's standard fees: market orders in and at the stop, a limit at the target.
@@ -196,16 +205,19 @@ export function scaledResult(candles, k, trade, short) {
     const fees = legs.reduce((n, l) => n + l.size * (TAKER_FEE * l.px + fee * px), 0) / risk;
     return { result, R, net: result === 'open' ? null : R - fees, exitT, adds: legs.length - 1, rr: sp.R };
   };
-  let stop = sl, next = 0;
+  // 🛡️ a far target (15R+ on the first entry): once +7R is reached the stop moves to +3R (FAR_LOCK)
+  const far = risk > 0 && Math.abs(tp - entry) / risk >= FAR_LOCK.rr;
+  let stop = sl, next = 0, locked = false;
   for (let j = k + 1; j < candles.length; j++) {
     const x = candles[j], adverse = short ? x.h : x.l, favour = short ? x.l : x.h;
-    if (dir * (adverse - stop) <= 0) return out(next === 0 ? 'loss' : next === 1 ? 'entry' : 'be', stop, x.t, TAKER_FEE);
+    if (dir * (adverse - stop) <= 0) return out(locked ? 'lock' : next === 0 ? 'loss' : next === 1 ? 'entry' : 'be', stop, x.t, TAKER_FEE);
     if (dir * (favour - tp) >= 0) return out('win', tp, x.t, MAKER_FEE);
     while (next < sp.adds.length && dir * (favour - sp.adds[next].price) >= 0) {
       const a = sp.adds[next++];
       legs.push({ px: a.price, size: a.size });
-      stop = a.stop;
+      stop = locked ? stop : a.stop;
     }
+    if (far && !locked && dir * (favour - entry) >= FAR_LOCK.at * risk) { const lk = entry + dir * FAR_LOCK.to * risk; if (dir * (lk - stop) > 0) stop = lk; locked = true; }
   }
   return out('open', candles.at(-1).c, null, 0);
 }
@@ -358,12 +370,60 @@ export function gradeSetup(side, { ny, swept = false, rsi = null, fade = false }
     : { grade: 'A++', why: `with the NY bias ${mark}, NY session open, 4h RSI ${Math.round(rsi)} (stretched): 🌃 Late A++`, tag: 'late' };
   return { grade: 'B', why: `with the NY bias ${mark}, but the NY session is open` };
 }
-export const GRADE_ORDER = ['A++', 'A+', 'A', 'B+', 'B', 'C++', 'C'];
+export const GRADE_ORDER = ['S+', 'A+', 'A++', 'A', 'B+', 'C++', 'C+', 'B', 'C'];
+// The tiers above and beside the A grades (tierOf):
+//   S+  an A grade that's both a 💥 Full swing failure (fullSweep) and a ⭐ Golden R:R (goldenRaw). 5 years,
+//       35 long-lived pairs, at plan times, EMA100 shorts left out, with the adds: +3.34R a trade on 53,
+//       +1.39R without the best 3 (positive in 3 of 5 years). Sized as the A grade under it (`from`).
+//       (An A+ with BTC's 1h RSI 🧊 cooled off was briefly S: +2.00R a trade over 5 years on the long-lived
+//       pairs, but +0.36R in the past year across the watchlist, behind the plain A grades. The 🧊 tag tracks it.)
+//   C+  an A grade whose candle engulfed the one before it (candleShape), taken with a limit 70% back.
+//       It was S until the current plan's numbers: +2.47R on 29 but −0.73R without the best 3. Tracking only.
+export const A_GRADES = new Set(['A++', 'A+', 'A']);
+// ⚠️ A short while BTC sits above its 4h EMA100 (the candle before the signal, as the trend is read):
+// across 5 years these lost every year (all signals −0.28R a trade; A grades at plan times −0.39R on
+// 585). Still shown, marked, and given no size (`skip: 'ema'`, see proposedRisk), so the bot passes too.
+export const SHORT_EMA = 100;
+// 🛡️ Far target: when the target was 15R+ from the entry, once the trade reaches +7R the stop moves to +3R.
+// 5 years, A grades at plan times, EMA100 shorts left out, with the adds: 547R against 531R holding, and the
+// worst drawdown 148R against 159R. Those targets are rarely reached (2 of 108 at 20R+), and most that got to
+// +5R gave it back. Taking half off instead made less (418R); clipping every trade made less too.
+export const FAR_LOCK = { rr: 15, at: 7, to: 3 };
+// ⭐ Golden R:R: an A grade (or S) whose target, from the close, is 10–20R away and within 10 ATR(14) of
+// the entry: room to pay, but a target the coin can reach. 5 years, A grades at plan times, with the adds:
+// +1.05R a trade on 236 (+0.55R without the best 3), positive in 4 of 5 years. Found by slicing the R:R
+// bands after the fact, so it's tracking only. `atr`: the coin's ATR(14) at the signal candle (atrAt).
+export function atrAt(candles, k, n = 14) {
+  if (k <= n) return null;
+  let a = 0;
+  for (let i = k - n; i < k; i++) a += Math.max(candles[i].h - candles[i].l, Math.abs(candles[i].h - candles[i - 1].c), Math.abs(candles[i].l - candles[i - 1].c));
+  return a / n;
+}
+export const goldenRaw = (trade, atr) => Boolean(trade && atr && trade.rr >= 10 && trade.rr < 20 && Math.abs(trade.tp - trade.entry) <= 10 * atr);
+// the tag: A grades and what's built on them (S, and C+, which is always an A grade underneath)
+export const goldenRR = (grade, trade, atr) => Boolean(grade && (A_GRADES.has(grade) || grade === 'S+' || grade === 'S' || grade === 'C+') && goldenRaw(trade, atr));
+// 💥 Full swing failure: the signal's wick also went past the swing candle's own wick (the levels are the
+// swing candle's body), at the furthest level swept. 5 years, A grades at plan times, EMA100 shorts left
+// out, with the adds: +0.55R a trade on 515, +0.34R without the best 3, positive in all 5 years
+// (body-only sweeps +0.38R, 2 losing years). `candleAt(t)`: the 4h candle starting at t.
+export function fullSweep(s, candleAt) {
+  if (!s?.levels?.length) return false;
+  const short = s.side === 'Short', lv = s.levels.reduce((a, b) => (short ? (b.price > a.price ? b : a) : (b.price < a.price ? b : a)));
+  const sc = candleAt(lv.t);
+  return Boolean(sc) && (short ? s.high > sc.h : s.low < sc.l);
+}
+export const emaGuard = (g, side, btcAbove) => (g && side === 'Short' && btcAbove ? { ...g, skip: 'ema' } : g);
+export function tierOf(g, { shape = null, full = false, grr = false, btcRsi = null, rr = null } = {}) {
+  if (!g || !A_GRADES.has(g.grade)) return g;
+  if (full && grr) return { ...g, grade: 'S+', from: g.grade, why: `${g.grade} (${g.why}): a full swing failure with a golden R:R` };
+  if (shape?.engulf) return { ...g, grade: 'C+', from: g.grade, why: `${g.grade} (${g.why}) whose candle ${shape.engulf === 'wick' ? 'closed past the last candle’s wick' : 'engulfed the last candle’s body'}: tracking, limit 70% back` };
+  return g;
+}
 
 // BTC's 1h RSI at the close, read from the setup's side (a short sees 100 − RSI, so low is
 // always "BTC stretched against the trade"). Backtest (A-grades, main closes Mon–Thu, past year):
 //   35–45  🧊 BTC cooled: pulled back without breaking down      86 trades, +2.90R a trade without the best 3
-//   ≤35    ⚠️ BTC stretched against it: the pullback is a turn     104, −0.22R without the best 3
+//   ≤35    ⚠️ BTC oversold (overbought for a short): the pullback is a turn     104, −0.22R without the best 3
 //   ≥60    ⚠️ BTC extended the trade's way (ran already)           45, −0.17R a trade, no quarter positive
 //   (all A-grades there: +1.35R without the best 3). A tag for tracking: grades and sizes don't change.
 export const BTC_RSI_BANDS = { deep: 35, cool: 45, chase: 60 };
@@ -374,6 +434,50 @@ export function btcRsiTag(side, r) {
   if (v <= BTC_RSI_BANDS.cool) return { kind: 'cool', rsi: n, text: `🧊 BTC cooled off (1h RSI ${n}): pulled back, not broken` };
   if (v >= BTC_RSI_BANDS.chase) return { kind: 'chase', rsi: n, text: `⚠️ BTC already extended the trade’s way (1h RSI ${n}): wait for a cool-off` };
   return null;
+}
+
+// The signal candle's shape. `away`: it already closed the trade's way (a long on a green
+// candle, a short on a red one), so the close sits far from the swept level; a limit 70% of
+// the candle back toward the wick gives the entry its R:R back (tracking: in the past year
+// it made far more than taking the close, but not in the year before). `engulf`: it closed past the
+// previous candle's wick ('wick') or only its body ('body').
+export function candleShape(prev, c, side) {
+  if (!c || !(c.h > c.l)) return null;
+  const short = side === 'Short', away = short ? c.c < c.o : c.c > c.o;
+  const engulf = !away || !prev ? null : (short ? c.c < prev.l : c.c > prev.h) ? 'wick' : (short ? c.c < Math.min(prev.o, prev.c) : c.c > Math.max(prev.o, prev.c)) ? 'body' : null;
+  return { away, engulf, limit: short ? c.l + 0.7 * (c.h - c.l) : c.h - 0.7 * (c.h - c.l) };
+}
+
+// The same trade from a limit at `limit` (candleShape's 70% back) instead of the close: same stop and
+// target, R:R from the limit. The order waits up to 24h (6 candles) and is cancelled if the target trades
+// first (a candle that reaches both without a fill counts as cancelled; one that fills and hits the stop
+// counts the stop). `missed`: 'ran' or 'expired' when it never filled. `fillT`: the candle it filled in.
+export const LIMIT_WAIT = 6;
+export function limitTrade(candles, k, trade, short, limit) {
+  if (!trade || limit == null) return trade;
+  const { sl, tp } = trade, risk = Math.abs(sl - limit);
+  if (!(risk > 0) || (short ? !(limit < sl && limit > tp) : !(limit > sl && limit < tp))) return trade;
+  const plan = { ...trade, entry: limit, rr: Math.abs(tp - limit) / risk, riskPct: risk / limit, result: 'open', R: null, exitT: null, limit: true, close: trade.entry };
+  const rrScaled = scalePlan(plan, short ? 'Short' : 'Long').R;
+  const missed = why => ({ ...plan, result: 'missed', missed: why, R: null, scaled: null });
+  for (let j = k + 1; j < candles.length; j++) {
+    const x = candles[j];
+    if (j > k + LIMIT_WAIT) return missed('expired');
+    const fills = short ? x.h >= limit : x.l <= limit, ran = short ? x.l <= tp : x.h >= tp;
+    if (!fills) { if (ran) return missed('ran'); continue; }
+    if (ran) return missed('ran');
+    const fillT = x.t;
+    if (short ? x.h >= sl : x.l <= sl) {
+      const fee = (TAKER_FEE * limit + TAKER_FEE * sl) / risk;
+      return { ...plan, fillT, result: 'loss', R: -1, exitT: x.t, scaled: { result: 'loss', R: -1, net: -1 - fee, exitT: x.t, adds: 0, rr: rrScaled } };
+    }
+    const scaled = scaledResult(candles, j, plan, short);
+    const end = walkSingle(candles, j + 1, plan, short);
+    if (end) return { ...plan, fillT, ...end, scaled };
+    const last = candles.at(-1);
+    return { ...plan, fillT, R: j < candles.length - 1 ? (short ? limit - last.c : last.c - limit) / risk : 0, scaled };
+  }
+  return { ...plan, R: 0, pending: true, scaled: { result: 'open', R: 0, net: null, exitT: null, adds: 0, rr: rrScaled } };   // waiting for the fill
 }
 
 // Wilder's RSI over `n` candles (as TradingView draws it): one value per candle, null until there are n changes.
