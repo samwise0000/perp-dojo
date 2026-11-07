@@ -8,10 +8,10 @@
 // candle on 15m bars, and whether it moved toward the level since the last check. It checks on its own from an
 // hour before the close: every 5 minutes, then every minute in the last 15. New sweeps can raise a browser
 // notification. After the close it shows which of them signalled.
-import { H4, DEFAULT_PAIRS, ALERT_SETTINGS, nearLevels, signalsIf, candleShape, gradeSetup, tierOf, emaGuard, trendMap, SHORT_EMA, rsi, btcRsiTag, atrAt, fullSweep, goldenRaw, whaleAbsorption, ladderWhy, scalePlan } from './sfp.js';
-import { sessionList, nyBiasAt, nyFadeAt, fadesNy, nyPullbackAt, inGoldenZone } from './bias.js';
+import { H4, DEFAULT_PAIRS, ALERT_SETTINGS, nearLevels, signalsIf, candleShape, gradeSetup, tierOf, emaGuard, trendMap, SHORT_EMA, rsi, btcRsiTag, atrAt, fullSweep, goldenRaw, whaleAbsorption, ladderWhy, scalePlan, killzoneAt, KILLZONE, lateSweep, LATE_TIP, EARLY_TIP, sweepTag, positioning, TAG_TIPS, isGodTier, godTip } from './sfp.js';
+import { sessionList, nyBiasAt, nyFadeAt, fadesNy, nyPullbackAt, inGoldenZone, nyExtremeAt } from './bias.js';
 import { proposedRisk } from './day-playbook.js';
-import { candlesFor, pool, bindCharts } from './signal-chart.js';
+import { candlesFor, pool, bindCharts, killzoneBox, killzoneMark } from './signal-chart.js';
 import { monitorHelpers } from './signals.js';
 
 const SEC = 1000, MIN = 60 * SEC, HOUR = 60 * MIN, DAY = 24 * HOUR, M15 = 15 * MIN;
@@ -101,9 +101,10 @@ function preview(r, hist, cur, mk) {
   const g0 = gradeSetup(side, { ny: mk.ny, swept: mk.btcSides.includes(side), rsi: rsi([...hist, cur]).at(-1), fade: fadesNy(side, mk.fade) });
   const sig = r.state === 'swept' ? signalsIf(hist, cur, ALERT_SETTINGS).find(s => s.side === side) || null : null;
   const byT = new Map(hist.map(c => [c.t, c])), atr = atrAt([...hist, cur], hist.length);
-  const g = emaGuard(tierOf(g0, { shape: sig ? shape : null, full: sig ? fullSweep(sig, t => byT.get(t)) : false, grr: sig ? goldenRaw(sig.trade, atr) : false, btcRsi: rsiK?.kind ?? null, rr: sig?.trade?.rr ?? null, whale: r.whale ?? null, zone: mk.zone(side) }), side, mk.ema100Up);
-  const risk = proposedRisk(g.grade, r.close, { tag: g.tag, from: g.from, skip: g.skip });
-  const out = { grade: g.grade, why: g.why, risk, rsiK, sure: Boolean(sig), shape };
+  const full = sig ? fullSweep(sig, t => byT.get(t)) : false;
+  const g = emaGuard(tierOf(g0, { shape: sig ? shape : null, full, grr: sig ? goldenRaw(sig.trade, atr) : false, btcRsi: rsiK?.kind ?? null, rr: sig?.trade?.rr ?? null, whale: r.whale ?? null, zone: mk.zone(side) }), side, mk.ema100Up);
+  const risk = proposedRisk(g.grade, r.close, { tag: g.tag, from: g.from, skip: g.skip, god: isGodTier(side, full, r.lean, g) });
+  const out = { grade: g.grade, from: g.from, skip: g.skip, why: g.why, risk, rsiK, sure: Boolean(sig), shape, full };
   if (sig?.trade) {
     const t = sig.trade, how = ladderWhy(g.grade, rsiK?.kind ?? null, shape);
     const rungs = how ? shape.ladder.filter(L => (t.tp - L) * (L - t.sl) > 0) : null;
@@ -122,7 +123,8 @@ async function run() {
   const errors = [], since = Date.now() - (ALERT_SETTINGS.lookbackDays + 10) * DAY;
   const rows = (await pool(PAIRS, 6, async symbol => {
     try {
-      const hist = (await candlesFor(symbol, since)).filter(c => c.t < w.start);
+      const deep = (await candlesFor(symbol, Date.now() - 380 * DAY)).filter(c => c.t < w.start);   // a year back, for ⚔️ killzone lines
+      const hist = deep.filter(c => c.t >= since);
       const qs = new URLSearchParams({ category: 'linear', symbol, interval: '240', start: w.start, end: Date.now() });
       const cur = (await api('/api/klines?' + qs)).candles.find(c => c.t === w.start);
       if (!cur) return [];
@@ -136,8 +138,11 @@ async function run() {
       const bySide = new Map();
       for (const l of levels) { if (!bySide.has(l.side)) bySide.set(l.side, { ...l, more: [] }); else bySide.get(l.side).more.push(l); }
       return [...bySide.values()].map(l => {
-        const r = { ...l, symbol, px: cur.c, cur, close: w.close, bars, whale: flow ? whaleAbsorption(l.side, w.start, flow)?.kind ?? null : null };
+        const r = { ...l, symbol, px: cur.c, cur, close: w.close, bars, whale: flow ? whaleAbsorption(l.side, w.start, flow)?.kind ?? null : null, lean: flow ? positioning(l.side, w.start, flow.taker) : null, nyx: nyExtremeAt(l.side, l.price, atrAt([...hist, cur], hist.length), [...hist, cur], w.close) };
         r.p = preview(r, hist, cur, mk);
+        r.late = r.state !== 'near' ? lateSweep(l.side, l.price, cur.t, bars) : null;     // when it first went past the level: ⏳ / ⚡ on A++ shorts / A+ longs
+        // ⚔️ does a 1–12 month trendline meet this level at the forming candle? (the wick needn't reach it yet)
+        { const all = [...deep, cur]; r.kzAtr = atrAt(all, all.length - 1); r.kz = killzoneAt(all, all.length - 1, l.side, l.price, r.kzAtr, { ...KILLZONE, wick: false }); }
         r.hist = hist;
         return r;
       });
@@ -287,6 +292,9 @@ function visibleRows() {
     && (!prefs.pinnedOnly || prefs.pins.includes(r.symbol)));
 }
 
+// one lane's cards, in the order they show: pinned first, then the ones with size, then the closest
+const laneRows = (rows, key) => rows.filter(r => r.state === key).sort((a, b) => (prefs.pins.includes(b.symbol) - prefs.pins.includes(a.symbol)) || (b.p?.risk?.pct > 0) - (a.p?.risk?.pct > 0) || (a.atr ?? a.toGo) - (b.atr ?? b.toGo) || Math.abs(a.inside) - Math.abs(b.inside));
+
 function paint() {
   paintStatus();
   const d = st.data, stale = d && d.close !== windowAt().close;
@@ -298,7 +306,7 @@ function paint() {
   counts.replaceChildren(...LANES.map(l => { const n = rows.filter(r => r.state === l.key).length; const c = el('div', `mon-count c-${l.key}`); c.title = l.tip; c.append(el('b', '', n), el('span', '', l.title)); return c; }));
   for (const l of LANES) {
     const col = st.root.querySelector(`.mon-lane[data-lane="${l.key}"]`), body = col.querySelector('.mon-lane-body');
-    const list = rows.filter(r => r.state === l.key).sort((a, b) => (prefs.pins.includes(b.symbol) - prefs.pins.includes(a.symbol)) || (b.p?.risk?.pct > 0) - (a.p?.risk?.pct > 0) || (a.atr ?? a.toGo) - (b.atr ?? b.toGo) || Math.abs(a.inside) - Math.abs(b.inside));
+    const list = laneRows(rows, l.key);
     col.querySelector('.mon-lane-n').textContent = list.length;
     body.replaceChildren(...(list.length ? list.map(card) : [el('p', 'mon-empty muted small', !d ? (windowAt().on ? 'Checking…' : 'Nothing checked yet. It starts an hour before the close, or press Check now.') : l.key === 'near' ? `Nothing within ${prefs.reach} ATR` : 'None')]));
   }
@@ -346,7 +354,10 @@ function card(r) {
   const name = el('b', 'mon-coin', coin(r.symbol));
   const side = el('span', 'mon-side ' + (short ? 'neg' : 'pos'), short ? '▼ Short' : '▲ Long');
   top.append(pin, name, side);
-  if (p.grade) { const g = el('span', `sig-grade ${gradeKey(p.grade)} mon-grade` + (p.sure ? '' : ' maybe'), gradeLabel(p.grade)); g.title = `${p.sure ? 'Grade if it closes here' : 'Grade if it sweeps and closes back (the candle’s shape can still change it)'}: ${p.grade}, ${p.why}`; top.append(g); }
+  const god = isGodTier(r.side, p.full, r.lean, p.grade ? { grade: p.grade, from: p.from, skip: p.skip } : null);
+  if (p.grade) { const g = el('span', `sig-grade ${gradeKey(p.grade)} mon-grade` + (p.sure ? '' : ' maybe') + (god ? ' god' : ''), (god ? '🔱 ' : '') + gradeLabel(p.grade)); g.title = (god ? godTip(r.side) + '\n\n' : '') + `${p.sure ? 'Grade if it closes here' : 'Grade if it sweeps and closes back (the candle’s shape can still change it)'}: ${p.grade}, ${p.why}`; top.append(g); }
+  // the tags as small pills: in your favour | warnings | plan notes, the same groups as the Signals tab
+  { const box = el('span', 'mon-tags'); tagList(r).forEach((g, i) => { if (i) box.append(el('span', 'tag-sep')); for (const x of g) { const k = el('span', x.cls + ' tone-' + x.tone, x.pill); k.title = x.title; box.append(k); } }); if (box.childElementCount) top.append(box); }
   if (r.isNew) top.append(el('span', 'mon-flag', 'new'));
   else if (r.became) top.append(el('span', 'mon-flag', r.became === 'swept' ? 'just swept' : r.became === 'beyond' ? 'went through' : 'back off'));
   else if (r.move) { const m = el('span', 'mon-move ' + (r.move > 0 ? 'closer' : 'away'), r.move > 0 ? '↗ closer' : '↘ away'); m.title = 'Since the last check'; top.append(m); }
@@ -368,8 +379,12 @@ function card(r) {
     c.append(plan);
   }
   const foot = el('div', 'mon-foot muted small');
-  foot.textContent = [r.pos != null ? `${Math.round(r.pos * 100)}% of 7d range` : null, r.whale === 'absorbed' ? '🐋 absorbed' : r.whale === 'crowded' ? '⚠️ crowded' : null, p.rsiK ? (p.rsiK.kind === 'cool' ? '🧊 BTC cooled' : p.rsiK.kind === 'chase' ? '⚠️ BTC ran' : '⚠️ BTC stretched') : null, r.more?.length ? `+${r.more.length} more level${r.more.length > 1 ? 's' : ''}` : null].filter(Boolean).join(' · ');
-  if (r.more?.length) foot.title = 'Also near: ' + r.more.map(m => `${f(m.price)} (${m.state})`).join(', ');
+  // each piece hovers with its own explanation
+  const bits = [
+    r.pos != null && [`${Math.round(r.pos * 100)}% of 7d range`, `Where the price sits in the last 7 days’ range: 0% the low, 100% the high. ${short ? 'Shorts near the top' : 'Longs near the bottom'} sweep the more obvious extremes.`],
+    r.more?.length && [`+${r.more.length} more level${r.more.length > 1 ? 's' : ''}`, 'Also near: ' + r.more.map(m => `${f(m.price)} (${m.state})`).join(', ')],
+  ].filter(Boolean);
+  bits.forEach(([t, tip], i) => { if (i) foot.append(' · '); const sp = el('span', '', t); sp.title = tip; foot.append(sp); });
   if (foot.textContent) c.append(foot);
   const go = () => openChart(r);
   c.onclick = go; c.onkeydown = e => { if (e.key === 'Enter') go(); };
@@ -399,13 +414,44 @@ function spark(r) {
   return box;
 }
 
-// the 4h chart with the level drawn, and a short card on the left about where it stands
+// every tag on a card, for the chart's header row: the same names and hovers as on the Signals tab
+function tagList(r) {
+  const p = r.p || {}, short = r.side === 'Short', L = [], add = (tone, pill, text, cls, title) => L.push({ tone, pill, text, cls, title });
+  if (r.whale) { const ws = r.whale === 'absorbed' && short; add(r.whale === 'absorbed' ? (short ? 'info' : 'good') : 'warn', r.whale === 'absorbed' ? '🐋' : '⚠️ $', r.whale === 'absorbed' ? '🐋 Whale Absorption' : '⚠️ Crowded', 'sig-whale ' + r.whale, TAG_TIPS['whale:' + r.whale + (ws ? ':Short' : '')]); }
+  if (r.lean?.on) add('good', '🔥', short ? '🔥 Sellers Positioning' : '🔥 Buyers Positioning', 'sig-lean', `So far: ${(r.lean.share * 100).toFixed(1)}% of the last 24h’s market orders were ${short ? 'sells' : 'buys'}, more than in ${Math.round(r.lean.rank * 100)}% of the past month’s 24h windows (the forming candle counts as it stands).\n\n${TAG_TIPS['lean:' + r.side]}`);
+  if (r.nyx?.at) add('good', '🗽', short ? '🗽 At NY high' : '🗽 At NY low', 'sig-nyx', `This one: level ${st.ctx.fmt.price(r.price)}, the previous NY session’s ${short ? 'high' : 'low'} ${st.ctx.fmt.price(short ? r.nyx.high : r.nyx.low)} (${Math.abs(r.nyx.d).toFixed(2)} ATR away).\n\n` + TAG_TIPS['nyx:' + r.side]);
+  const tg = sweepTag(r.side, p.grade, r.late);
+  if (tg) add('good', tg === 'late' ? '⏳' : '⚡', tg === 'late' ? '⏳ Late sweep' : '⚡ Early sweep', 'sig-late ' + tg, `First went past the level at ${hm(r.late.at)}, in the candle’s ${tg === 'late' ? 'second' : 'first'} half.${p.sure ? '' : ' (If the grade holds.)'}\n\n${TAG_TIPS[tg]}`);
+  if (p.rsiK) add(p.rsiK.kind === 'cool' ? 'good' : 'warn', p.rsiK.kind === 'cool' ? '🧊' : '⚠️ RSI', p.rsiK.kind === 'cool' ? '🧊 RSI' : '⚠️ RSI', 'sig-btcrsi ' + p.rsiK.kind, `${p.rsiK.text}.\n\n${TAG_TIPS['rsi:' + p.rsiK.kind] || ''}`);
+  if (r.kz) add('warn', '⚔️', '⚔️ Killzone', 'sig-kz', `⚔️ Killzone: a ${r.kz.days}-day ${short ? 'falling' : 'rising'} 4h trendline through two wick tips meets this level at ${st.ctx.fmt.price(r.kz.at)}, ${r.kz.dist.toFixed(2)} ATR from it (boxed on the chart).\nWhy it matters: trendline and level traders watch the same price, so it’s where the fight happens. It breaks more often than it holds: within 24h about half the time.\nTracking only.`);
+  if (p.shape?.away) add('info', '🕯️', p.shape.engulf === 'wick' ? '🕯️ Wick engulf' : p.shape.engulf === 'body' ? '🕯️ Body engulf' : '🕯️ Away', 'sig-shape' + (p.shape.engulf ? ' ' + p.shape.engulf : ''), `So far, as the candle stands.\n\n${TAG_TIPS[p.shape.engulf ? 'engulf' : 'away']}`);
+  return ['good', 'warn', 'info'].map(t => L.filter(x => x.tone === t)).filter(g => g.length);
+}
+// the chart's header row: the grade and side, then the tags grouped like the Signals tab's
+function tagChips(r) {
+  const p = r.p || {}, short = r.side === 'Short', out = [];
+  const god = isGodTier(r.side, p.full, r.lean, p.grade ? { grade: p.grade, from: p.from, skip: p.skip } : null);
+  if (p.grade) out.push({ text: (god ? '🔱 ' : '') + gradeLabel(p.grade) + (p.sure ? '' : ' ?'), cls: `sig-grade ${gradeKey(p.grade)}` + (god ? ' god' : ''), title: (god ? godTip(r.side) + '\n\n' : '') + `${p.sure ? 'Grade if it closes here' : 'Grade if it sweeps and closes back (the candle’s shape can still change it)'}: ${p.grade}, ${p.why}` });
+  out.push({ text: short ? '▼ Short' : '▲ Long', cls: 'rg-tag', title: short ? 'A swept high: a short if it closes back below the level' : 'A swept low: a long if it closes back above the level' });
+  for (const g of tagList(r)) { out.push({ text: '', cls: 'tag-sep', title: '' }); for (const x of g) out.push({ text: x.text, cls: x.cls + ' tone-' + x.tone, title: x.title }); }
+  return out;
+}
+
+// the 4h chart with the level drawn, and a short card on the left about where it stands.
+// ← → (or the buttons) step through every card on the board, lane by lane, in the order they show.
 function openChart(r) {
+  const order = LANES.flatMap(l => laneRows(visibleRows(), l.key)), list = order.includes(r) ? order : [r];
+  const items = list.map(chartItem);
+  st.ctx.openReplay(items[list.indexOf(r)], items, { apiJson: st.ctx.apiJson, compact: true, nav: { prev: '‹ Previous', next: 'Next ›', count: (i, n) => `${i} of ${n} on the board` }, fmt: { money: st.ctx.fmt.money, price: st.ctx.fmt.price, dateTime: st.ctx.fmt.dateTime, duration: () => '' } });
+}
+function chartItem(r) {
   const f = st.ctx.fmt.price, short = r.side === 'Short', d = st.data, now = Math.min(Date.now(), d.close), p = r.p || {};
   const what = r.state === 'swept' ? `Wick to **${f(r.wick)}**, back inside at **${f(r.px)}**: signals if it closes ${short ? 'below' : 'above'} **${f(r.price)}**.`
     : r.state === 'beyond' ? `Past the level at **${f(r.px)}**: needs to close back ${short ? 'below' : 'above'} **${f(r.price)}**.`
     : `${short ? 'High' : 'Low'} so far **${f(r.wick)}**: ${pc(r.toGo)} more${r.atr != null ? ` (${r.atr.toFixed(1)} ATR)` : ''} to sweep **${f(r.price)}**.`;
   const steps = [what];
+  if (r.nyx?.at) steps.push(`🗽 At NY ${short ? 'high' : 'low'}: the level is ${Math.abs(r.nyx.d).toFixed(2)} ATR from the previous NY session’s ${short ? 'high' : 'low'} (**${f(short ? r.nyx.high : r.nyx.low)}**). Backtest plan trades here won ${short ? '36% vs 27%' : '34% vs 28%'} elsewhere. Tracking only.`);
+  if (r.kz) steps.push(`⚔️ Killzone: a ${r.kz.days}-day ${short ? 'falling' : 'rising'} trendline (dotted purple) meets this level at **${f(r.kz.at)}**, boxed on the chart. These broke within 24h about half the time. Tracking only.`);
   if (p.grade) steps.push(`${p.sure ? 'Grade' : 'Grade if it signals'}: **${p.grade}**${p.risk ? `, ${p.risk.pct ? `risk **${+p.risk.pct.toFixed(2)}%**` : 'no size'}` : ''}.`);
   if (p.trade) steps.push(`${p.how ? `🪜 ${p.rungs.map(x => `**${f(x)}**`).join(' · ')}` : `Entry at the close **${f(p.trade.entry)}**`}, stop **${f(p.trade.sl)}**, TP **${f(p.trade.tp)}** then trail: **${p.rr.toFixed(1)}R**.`);
   const t = {
@@ -415,15 +461,16 @@ function openChart(r) {
       interval: '240',
       title: `${r.symbol} · ${short ? 'high' : 'low'} ${f(r.price)} · the ${hm(d.close)} close`,
       guide: {
-        history: null, outcome: null,
+        history: { title: 'Tags', chips: tagChips(r), rows: [], proj: null }, outcome: null,
         context: `Checked ${hm(d.at)}. The level formed ${new Date(r.t).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}${r.pos != null ? `, at ${Math.round(r.pos * 100)}% of the 7-day range` : ''}.`,
         sections: [{ key: 'entry', title: short ? 'Swing high' : 'Swing low', figure: f(r.price), sub: LANES.find(l => l.key === r.state).title.toLowerCase(), state: r.state === 'near' ? 'wait' : 'done', badge: LANES.find(l => l.key === r.state).title, steps }],
       },
       lines: [{ price: r.price, color: 'ink', from: r.t, to: d.start }, ...(p.trade ? [{ price: p.trade.sl, color: 'neg', after: true, title: 'SL' }, { price: p.trade.tp, color: 'pos', after: true, title: 'TP' }] : [])],
-      boxes: [],
-      marks: [{ t: r.t, position: short ? 'aboveBar' : 'belowBar', shape: 'circle', color: 'ink', tip: [`Swing ${short ? 'high' : 'low'} · level ${f(r.price)}`] }],
+      boxes: killzoneBox(r.kz, r.price, r.kzAtr, r.cur.t),
+      trendlines: r.kz ? [{ from: r.kz.from, to: r.kz.to, end: r.cur.t + 12 * H4, color: '#8b5cf6' }] : [],
+      marks: [{ t: r.t, position: short ? 'aboveBar' : 'belowBar', shape: 'circle', color: 'ink', tip: [`Swing ${short ? 'high' : 'low'} · level ${f(r.price)}`] }, ...killzoneMark(r.kz, r.price, r.cur.t, r.side, f, r.whale === 'absorbed')],
       note: 'The level is drawn from the swing that made it. The last candle is the one still forming.',
     },
   };
-  st.ctx.openReplay(t, [t], { apiJson: st.ctx.apiJson, fmt: { money: st.ctx.fmt.money, price: f, dateTime: st.ctx.fmt.dateTime, duration: () => '' } });
+  return t;
 }

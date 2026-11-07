@@ -81,12 +81,20 @@ export function setupName(grade, closeAt, tag) {
 // The proposed risk for a setup whose 4h candle closes at `closeAt` (ms):
 // { pct, slot, why } with slot 'prime' | 'ok' | 'weak' | 'caution' | 'skip' | null (outside hours).
 // tag: the grade's tag ('midnight' for the Midnight sweep), optional.
-export function proposedRisk(grade, closeAt, { tag = null, from = null, skip = null } = {}) {
+// 🔱 God tier (a 💥 full swing failure long with 🔥 Buyers Positioning): at least full plan size, whatever the grade
+// or the time. 5 years: plan trades +1.06R a trade on 30 (vs +0.09R for other full SFP longs, ~2% odds of luck),
+// all graded +0.39R on 169, C longs +0.35R on 99. Rests on a few runners (+0.13R without the best 3): forward-test.
+// Shorts (🔥 Sellers Positioning on an A-grade short): +1.26R a trade on 38 all graded, plan +2.00R on 21. Same floor.
+export const GOD_PCT = 1;
+export function proposedRisk(grade, closeAt, { tag = null, from = null, skip = null, god = false } = {}) {
+  if (god && skip !== 'ema') {
+    const r = proposedRisk(grade, closeAt, { tag, from, skip });
+    return r.pct >= GOD_PCT ? { ...r, why: '🔱 god tier, ' + r.why } : { ...r, pct: GOD_PCT, why: `🔱 god tier (💥 full SFP + 🔥 buyers positioning): ${GOD_PCT}% whatever the grade or time${r.pct ? ` (the grade alone: ${r.pct}%)` : ''}` };
+  }
   if (skip === 'ema') { const t = new Date(closeAt), i = SESSION.indexOf(t.getHours()); return { pct: 0, slot: i < 0 || t.getMinutes() ? null : SLOTS[t.getDay()][i], why: 'a short while BTC is above its 4h EMA100: skip (those shorts lost in every one of 5 years)' }; }
-  // S tier: a full swing failure with a golden R:R on an A grade, sized as that A grade, at the same closes
-  if (grade === 'S++') { const r = proposedRisk(from || 'A', closeAt, { tag }); return { ...r, why: r.pct ? `S++ tier (${from || 'an A grade'}: S+ or 🐋 A with ⭐ golden R:R in the ✨ golden zone): sized as ${from || 'A'}, ${r.why.replace(/^grade \S+ /, '')}` : r.why }; }
-  if (grade === 'S') { const r = proposedRisk(from || 'A', closeAt, { tag }); return { ...r, why: r.pct ? `S tier (${from || 'an A grade'} with 🐋 whale absorption, 🧊 BTC cooled): sized as ${from || 'A'}, ${r.why.replace(/^grade \S+ /, '')}` : r.why }; }
-  if (grade === 'S+') { const r = proposedRisk(from || 'A', closeAt, { tag }); return { ...r, why: r.pct ? `S+ tier (${from || 'an A grade'}, full swing failure + golden R:R): sized as ${from || 'A'}, ${r.why.replace(/^grade \S+ /, '')}` : r.why }; }
+  // S+ tier: a full swing failure with BTC cooled or a golden R:R on an A grade, sized as that A grade, at the same closes
+  if (grade === 'S++') { const r = proposedRisk(from || 'A', closeAt, { tag }); return { ...r, why: r.pct ? `S++ tier (${from || 'an A grade'}: S+ with ⭐ golden R:R in the ✨ golden zone): sized as ${from || 'A'}, ${r.why.replace(/^grade \S+ /, '')}` : r.why }; }
+  if (grade === 'S+') { const r = proposedRisk(from || 'A', closeAt, { tag }); return { ...r, why: r.pct ? `S+ tier (${from || 'an A grade'}, full swing failure + BTC cooled or golden R:R): sized as ${from || 'A'}, ${r.why.replace(/^grade \S+ /, '')}` : r.why }; }
   const t = new Date(closeAt), i = SESSION.indexOf(t.getHours());
   const slot = i < 0 || t.getMinutes() ? null : SLOTS[t.getDay()][i];
   const base = RISK_PCT[grade] ?? 0;
@@ -240,11 +248,10 @@ export { countdown as pbCountdown, hh as pbHour, r as pbR, sessDay as pbSessDay,
 export function strategiesToday(now = new Date()) {
   const d = now.getDay(), at = (h, plus = 0) => { const t = new Date(now); t.setDate(t.getDate() + plus); t.setHours(h, 0, 0, 0); return t.getTime(); };
   const out = [], mains = SESSION.filter((h, i) => SLOTS[d][i] !== 'skip');
-  // S: an A grade that's a full swing failure with a golden R:R, sized as its A grade, wherever the A grades are taken
+  // S+: an A grade that's a full swing failure with BTC cooled or a golden R:R, sized as its A grade, wherever the A grades are taken
   const sBy = mains.map(h => [h, proposedRisk('A', at(h))]).filter(([, r]) => r.pct > 0);
-  if (sBy.length) out.push({ name: '💎 S++', what: 'S+ or 🐋 A / A+ with ⭐ golden R:R in the ✨ golden zone', pct: 'as its A', note: '', size: 'as its A grade', caution: sBy.every(([, r]) => r.slot === 'caution') });
-  if (sBy.length) out.push({ name: 'S+', what: 'full swing failure + golden R:R', pct: 'as its A', note: '', size: 'as its A grade', caution: sBy.every(([, r]) => r.slot === 'caution') });
-  if (sBy.length) out.push({ name: '🐋 S', what: 'A or A+ with whale absorption, BTC cooled', pct: 'as its A', note: '', size: 'as its A grade', caution: sBy.every(([, r]) => r.slot === 'caution') });
+  if (sBy.length) out.push({ name: '💎 S++', what: 'S+ with ⭐ golden R:R in the ✨ golden zone', pct: 'as its A', note: '', size: 'as its A grade', caution: sBy.every(([, r]) => r.slot === 'caution') });
+  if (sBy.length) out.push({ name: 'S+', what: 'full swing failure + 🧊 BTC cooled or ⭐ golden R:R', pct: 'as its A', note: '', size: 'as its A grade', caution: sBy.every(([, r]) => r.slot === 'caution') });
   for (const [g, name, what] of [['A++', '★ A++', 'BTC swept the same way'], ['A+', 'A+', 'alt’s 4h RSI oversold / overbought'], ['A', 'A', 'with the bias']]) {
     const by = mains.map(h => [h, proposedRisk(g, at(h))]).filter(([, r]) => r.pct > 0);
     if (!by.length) continue;

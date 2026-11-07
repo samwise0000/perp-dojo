@@ -6,7 +6,7 @@
 // the year before your start date says what the plan should average.
 import { loadSignals, atCloseSignals, rrEl } from './signals.js';
 import { showOnChart } from './signal-chart.js';
-import { H4, GRADE_ORDER } from './sfp.js';
+import { H4, GRADE_ORDER, isGodTier } from './sfp.js';
 import { proposedRisk, picksAt, setupName } from './day-playbook.js';
 
 const DAY = 864e5, GOAL = 100, START_KEY = 'perp-dojo:forward-start';
@@ -51,7 +51,7 @@ export function matchSignal(pos, signals) {
 }
 
 // Would the plan take this signal at its close (risk > 0), and was it one of the close's picks?
-export const takeable = s => Boolean(s.grade && s.trade) && proposedRisk(s.grade.grade, s.t + H4, { tag: s.grade.tag, from: s.grade.from, skip: s.grade.skip }).pct > 0;
+export const takeable = s => Boolean(s.grade && s.trade) && proposedRisk(s.grade.grade, s.t + H4, { tag: s.grade.tag, from: s.grade.from, skip: s.grade.skip, god: isGodTier(s.side, s.full, s.lean, s.grade) }).pct > 0;
 export function pickSet(signals) {
   const byClose = new Map();
   for (const s of signals.filter(takeable)) { const k = s.t; if (!byClose.has(k)) byClose.set(k, []); byClose.get(k).push(s); }

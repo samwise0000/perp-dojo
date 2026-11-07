@@ -1,7 +1,7 @@
 // Signal charts: the 4h candle cache (IndexedDB, so a reload only fetches what
 // has closed since) and the replay window for one signal, with its levels, the
 // trade and the scaling plan drawn, and a plain-English trade guide.
-import { scalePlan, closedOnly, H4, TAKER_FEE, MAKER_FEE, FAR_LOCK } from './sfp.js';
+import { scalePlan, closedOnly, H4, TAKER_FEE, MAKER_FEE, FAR_LOCK, isGodTier } from './sfp.js';
 import { idbGet, idbSet } from './db.js';
 import { proposedRisk } from './day-playbook.js';
 
@@ -91,9 +91,16 @@ export function chartItem(s) {
   const lv = s.levels.map(l => `**${p(l.price)}**`).join(', '), cpp = s.grade?.grade === 'C++';
   // short on purpose: the card heads already show each price, the stop distance and the R
   const entry = [`Swept ${lv}, closed back ${short ? 'below' : 'above'} at ${when(s.t)}.`];
+  if (s.late && (s.side === 'Short' ? s.grade?.grade === 'A++' && s.late.late : s.grade?.grade === 'A+' && !s.late.late)) entry.push(s.side === 'Short'
+    ? `⏳ Late sweep: the wick first went past the high ${Math.round((s.late.at - s.t) / 3_600_000)}h into the candle, so the rejection came into the close. A++ shorts like this did better over 5 years (+0.71R vs −0.39R a trade), in both the latest year and years 2–5. Tracking only.`
+    : `⚡ Early sweep: the wick first went under the low ${Math.round((s.late.at - s.t) / 3_600_000)}h into the candle and price held above it to the close. A+ longs like this did better over 5 years (+1.95R vs +0.24R a trade), in both the latest year and years 2–5. Tracking only.`);
+  if (isGodTier(s.side, s.full, s.lean, s.grade)) entry.push(short ? '🔱 God tier (short): 🔥 sellers already leaning in on an A-grade short, the strongest short combination tested (+1.26R a trade on 38 over 5 years, winners capped). At least 1% whatever the time.' : '🔱 God tier: a 💥 full swing failure with 🔥 buyers already leaning in, the strongest combination tested (+0.39R a trade vs −0.34R over 5 years, winners capped). At least 1% whatever the grade or time.');
+  if (s.lean?.on) entry.push(`🔥 ${s.side === 'Short' ? 'Sellers' : 'Buyers'} Positioning: ${(s.lean.share * 100).toFixed(1)}% of the last 24h’s market orders were ${s.side === 'Short' ? 'sells' : 'buys'}, top ${Math.max(1, Math.round((1 - s.lean.rank) * 100))}% of this coin’s month. ${s.side === 'Short' ? 'Sellers' : 'Buyers'} were leaning in before the sweep: more of these ran to +3R. Tracking only.`);
+  if (s.nyx?.at) entry.push(`🗽 At NY ${short ? 'high' : 'low'}: the level is ${Math.abs(s.nyx.d).toFixed(2)} ATR from the previous NY session’s ${short ? 'high' : 'low'} (**${p(short ? s.nyx.high : s.nyx.low)}**). In the backtest plan trades here won ${short ? '36% vs 27%' : '34% vs 28%'} elsewhere. Tracking only.`);
+  if (s.kz) entry.push(`⚔️ Killzone: a ${s.kz.days}-day ${short ? 'falling' : 'rising'} line meets the level here. These broke within 24h 55% of the time. Tracking only.`);
   const manage = [], exit = [];
   // the proposed risk: % of equity by grade and close (day-playbook.js), and the size it means
-  const pr = s.grade && tr ? proposedRisk(s.grade.grade, s.t + H4, { tag: s.grade.tag, from: s.grade.from, skip: s.grade.skip }) : null;
+  const pr = s.grade && tr ? proposedRisk(s.grade.grade, s.t + H4, { tag: s.grade.tag, from: s.grade.from, skip: s.grade.skip, god: isGodTier(s.side, s.full, s.lean, s.grade) }) : null;
   const eq = ctx.equity?.(), hidden = ctx.balanceHidden?.();
   const usd = pr && eq ? eq * pr.pct / 100 : null;
   const qty = usd ? usd / Math.abs(tr.entry - tr.sl) : null;
@@ -174,6 +181,8 @@ export function chartItem(s) {
             badge: !o || tr.missed || tr.pending ? '' : o.result === 'open' ? (o.trailing ? 'trailing' : 'open') : rText(o.R) },
         ],
       },
+      // ⚔️ the killzone's trendline, from its first wick tip to a couple of days past the signal
+      trendlines: s.kz ? [{ from: s.kz.from, to: s.kz.to, end: s.t + 12 * H4, color: '#8b5cf6' }] : [],
       lines: [
         ...s.levels.map(l => ({ price: l.price, color: 'ink', from: l.t, to: s.t })),     // swing levels in neutral gray
         ...(tr ? [
@@ -191,13 +200,17 @@ export function chartItem(s) {
           ]),
         ] : []),
       ],
-      boxes: tr ? [
-        { after: true, price: tr.sl, base: tr.entry, color: 'neg' },
-        { after: true, price: tr.tp, base: tr.entry, color: 'pos' },
-      ] : [],
+      boxes: [
+        ...(tr ? [
+          { after: true, price: tr.sl, base: tr.entry, color: 'neg' },
+          { after: true, price: tr.tp, base: tr.entry, color: 'pos' },
+        ] : []),
+        ...killzoneBox(s.kz, lvOf(s), s.atr, s.t),
+      ],
       marks: [
         ...s.levels.map(l => ({ t: l.t, position: short ? 'aboveBar' : 'belowBar', shape: 'circle', color: 'ink', tip: [`Swing ${short ? 'high' : 'low'} · level ${p(l.price)}`, new Date(l.t).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })] })),
         ...(tr ? [{ t: tr.tpT, position: short ? 'belowBar' : 'aboveBar', shape: 'circle', color: 'ink', tip: [`Opposing swing ${short ? 'low' : 'high'} · target ${p(tr.tp)}`] }] : []),
+        ...killzoneMark(s.kz, lvOf(s), s.t, s.side, p, s.whale?.kind === 'absorbed'),
         { t: s.t, position: short ? 'aboveBar' : 'belowBar', shape: short ? 'arrowDown' : 'arrowUp', color: short ? 'neg' : 'pos', tip: [tr?.limit ? `SFP ${s.side.toLowerCase()} · closed ${p(s.close)}, limit ${p(tr.entry)}` : `SFP ${s.side.toLowerCase()} · entry ${p(s.close)}`, `Wick ${p(short ? s.high : s.low)} is the stop`] },
         ...(o?.tpT && o.tpT !== o.exitT ? [{ t: o.tpT, position: short ? 'belowBar' : 'aboveBar', shape: 'circle', color: 'pos', tip: [`Target ${p(tr.tp)} touched · trailing the stop from here`] }] : []),
         ...(o?.exitT ? [{ t: o.exitT, position: o.result === 'win' ? (short ? 'belowBar' : 'aboveBar') : (short ? 'aboveBar' : 'belowBar'), shape: 'square', color: o.R > 0 ? 'pos' : 'neg', tip: [endTip] }] : []),
@@ -211,4 +224,20 @@ export function showOnChart(s, list) {
   const sorted = [...list].sort((a, b) => a.t - b.t || a.symbol.localeCompare(b.symbol));
   const items = sorted.map(chartItem);
   ctx.openReplay(items[sorted.indexOf(s)], items, { apiJson: ctx.apiJson, fmt: { money: ctx.fmt.money, price: ctx.fmt.price, dateTime: ctx.fmt.dateTime, duration: () => '' } });
+}
+
+// ⚔️ the killzone on the chart: a purple box where the trendline meets the level (3 candles either side, the two
+// prices with a little room), and a ⚔️ marker on the signal candle that says what it is. The line itself is drawn
+// from `view.trendlines`.
+const KZ_COLOR = '#8b5cf6';
+const lvOf = s => (s.lv ?? (s.side === 'Short' ? Math.max(...s.levels.map(l => l.price)) : Math.min(...s.levels.map(l => l.price))));
+export function killzoneBox(kz, level, atr, t) {
+  if (!kz || !(atr > 0)) return [];
+  const pad = 0.35 * atr, hi = Math.max(kz.at, level) + pad, lo = Math.min(kz.at, level) - pad;
+  return [{ from: t - 3 * H4, to: t + 3 * H4, price: hi, base: lo, color: KZ_COLOR, alpha: 0.24 }];
+}
+export function killzoneMark(kz, level, t, side, p, whale) {
+  if (!kz) return [];
+  const short = side === 'Short';
+  return [{ t, position: short ? 'belowBar' : 'aboveBar', shape: 'square', color: KZ_COLOR, tip: [`⚔️ Killzone: the ${kz.days}-day ${short ? 'falling' : 'rising'} line is at ${p(kz.at)} here, on the level ${p(level)}`, 'Breaks within 24h about half the time'] }];
 }

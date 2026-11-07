@@ -1,4 +1,5 @@
 import './side.js';
+import './tips.js';
 import { renderPlaybook as renderDayCard, tickSeconds } from './playbook-hero.js';
 import { batteryBody, lastTradeBody, noteTopic } from './pos-battery.js';
 import { positionNotes, tickPlaybook, MAX_POSITIONS, smtCheck, SMT_WINDOW } from './day-playbook.js';

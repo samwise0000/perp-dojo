@@ -465,6 +465,10 @@ button.cal-day:hover, button.cal-day:focus-visible { outline: 1px solid var(--ax
 .tip { position: absolute; z-index: 40; pointer-events: none; background: var(--card-2); border: 1px solid var(--ring); border-radius: 8px;
   box-shadow: 0 8px 24px rgba(0, 0, 0, .3); padding: 8px 10px; font-size: 12.5px; min-width: 120px; max-width: 280px; }
 .tip-title { color: var(--muted); margin-bottom: 4px; }
+/* the app-wide hover tooltip (tips.js): a popover, so it sits above dialogs; plain text, line breaks kept */
+.tip.tip-text[popover] { position: fixed; inset: auto; margin: 0; color: var(--ink-2, var(--ink)); white-space: normal; line-height: 1.45; max-width: 360px; min-width: 0; overflow: visible; padding: 9px 11px; }
+.tip.tip-text:popover-open { animation: tipIn .08s ease-out; }
+@keyframes tipIn { from { opacity: 0; } to { opacity: 1; } }
 .tip-row { display: flex; align-items: center; gap: 8px; }
 .tip-row b { font-weight: 600; font-variant-numeric: tabular-nums; }
 .tip-row span { color: var(--ink-2); }
@@ -1556,6 +1560,8 @@ table.data tr.replayable:focus-visible { outline: 2px solid var(--accent); outli
 /* a signal: the header with its record, then the guide on the left and the chart on the right, sized to the window */
 .replay-dlg.has-guide { width: min(1720px, calc(100vw - 24px)); height: calc(100vh - 24px); max-height: none; padding: 12px 16px; }
 .replay-dlg.has-guide[open] { display: flex; flex-direction: column; overflow: hidden; }
+/* from the Monitoring tab: a touch smaller, the board still showing around it */
+.replay-dlg.has-guide.compact { width: min(1560px, calc(100vw - 80px)); height: calc(100vh - 80px); }
 .replay-dlg.has-guide .dlg-head { margin-bottom: 8px; flex: none; }
 .replay-dlg.has-guide .dlg-head h2 { font-size: 15px; }
 .replay-dlg.has-guide .rp-head { flex: none; margin-bottom: 10px; }
@@ -2966,6 +2972,15 @@ table.data td.sig-lvl-c { max-width: 110px; overflow: hidden; text-overflow: ell
 .sig-whale { display: inline-block; font-size: 11px; font-weight: 700; padding: 2px 7px; border-radius: 999px; white-space: nowrap; cursor: help; color: color-mix(in srgb, #0d9488 75%, var(--ink)); background: color-mix(in srgb, #14b8a6 12%, transparent); box-shadow: inset 0 0 0 1px color-mix(in srgb, #14b8a6 40%, transparent); }
 .sig-whale.crowded { color: color-mix(in srgb, #b45309 75%, var(--ink)); background: color-mix(in srgb, #f59e0b 12%, transparent); box-shadow: inset 0 0 0 1px color-mix(in srgb, #f59e0b 40%, transparent); }
 .sig-pill.whale { background: color-mix(in srgb, #14b8a6 18%, transparent); padding: 1px 4px; }
+.sig-kz { display: inline-block; font-size: 11px; font-weight: 700; padding: 2px 7px; border-radius: 999px; white-space: nowrap; cursor: help; color: color-mix(in srgb, #6d28d9 75%, var(--ink)); background: color-mix(in srgb, #8b5cf6 12%, transparent); box-shadow: inset 0 0 0 1px color-mix(in srgb, #8b5cf6 40%, transparent); }
+.sig-kz.warn { color: color-mix(in srgb, #b45309 75%, var(--ink)); background: color-mix(in srgb, #f59e0b 12%, transparent); box-shadow: inset 0 0 0 1px color-mix(in srgb, #f59e0b 40%, transparent); }
+.sig-pill.kz { background: color-mix(in srgb, #8b5cf6 18%, transparent); padding: 1px 4px; }
+.sig-late { display: inline-block; font-size: 11px; font-weight: 700; padding: 2px 7px; border-radius: 999px; white-space: nowrap; cursor: help; color: color-mix(in srgb, #0f766e 75%, var(--ink)); background: color-mix(in srgb, #14b8a6 12%, transparent); box-shadow: inset 0 0 0 1px color-mix(in srgb, #14b8a6 40%, transparent); }
+.sig-late.early { color: color-mix(in srgb, #a16207 75%, var(--ink)); background: color-mix(in srgb, #eab308 12%, transparent); box-shadow: inset 0 0 0 1px color-mix(in srgb, #eab308 40%, transparent); }
+.sig-lean { display: inline-block; font-size: 11px; font-weight: 700; padding: 2px 7px; border-radius: 999px; white-space: nowrap; cursor: help; color: color-mix(in srgb, #c2410c 75%, var(--ink)); background: color-mix(in srgb, #f97316 12%, transparent); box-shadow: inset 0 0 0 1px color-mix(in srgb, #f97316 40%, transparent); }
+.sig-nyx { display: inline-block; font-size: 11px; font-weight: 700; padding: 2px 7px; border-radius: 999px; white-space: nowrap; cursor: help; color: color-mix(in srgb, #0f766e 75%, var(--ink)); background: color-mix(in srgb, #14b8a6 12%, transparent); box-shadow: inset 0 0 0 1px color-mix(in srgb, #14b8a6 40%, transparent); }
+.sig-pill.lean { background: color-mix(in srgb, #f97316 18%, transparent); padding: 1px 4px; }
+.sig-pill.late { background: color-mix(in srgb, #14b8a6 18%, transparent); padding: 1px 4px; }
 /* open positions: a 5th+ note hides behind a tiny +N on the 4th */
 .pos-note:has(.pos-more) { padding-right: 34px; }
 .pos-more { position: absolute; top: 4px; right: 5px; font-size: 10px; font-weight: 700; line-height: 1; padding: 3px 5px; border-radius: 999px; cursor: help; color: var(--ink-2); background: color-mix(in srgb, var(--ink) 9%, transparent); }
@@ -3105,3 +3120,58 @@ table.data td.sig-lvl-c { max-width: 110px; overflow: hidden; text-overflow: ell
 #view-monitor.mon-stale .mon-board { opacity: .6; }
 @media (max-width: 1100px) { .mon-board { grid-template-columns: 1fr 1fr; } .mon-hero { grid-template-columns: auto 1fr; } .mon-counts { grid-column: 1 / -1; } }
 @media (max-width: 760px) { .mon-board { grid-template-columns: 1fr; } }
+
+/* ---- tags grouped: in your favour | warnings | plan notes ---- */
+.tag-sep { display: inline-block; width: 1px; height: 14px; margin: 0 3px; background: var(--grid, rgba(127,127,127,.35)); vertical-align: middle; flex: none; }
+.rg-chips .tag-sep { height: 18px; align-self: center; margin: 0 4px; }
+.sig-tagcell .sig-chips + .sig-chips { margin-top: 4px; }
+.sig-chips.tags-good, .sig-chips.tags-warn, .sig-chips.tags-info { padding-left: 6px; border-left: 2px solid transparent; }
+.sig-chips.tags-good { border-left-color: color-mix(in srgb, var(--pos) 70%, transparent); }
+.sig-chips.tags-warn { border-left-color: color-mix(in srgb, #f59e0b 80%, transparent); }
+.sig-chips.tags-info { border-left-color: color-mix(in srgb, var(--muted) 60%, transparent); }
+.mon-tags { display: inline-flex; align-items: center; gap: 3px; flex-wrap: wrap; }
+.mon-tags > span:not(.tag-sep) { font-size: 11px; padding: 1px 5px; }
+
+/* a missed limit: what the close would have made, under it, quieter than a real result */
+.sig-missed-alt { display: block; opacity: .75; font-style: italic; }
+
+/* 🔱 God tier: a gold ring on the grade chip */
+.sig-grade.god { box-shadow: 0 0 0 1.5px #d4a017, 0 0 10px -2px rgb(212 160 23 / .7); }
+
+/* ---- signal tile header: row 1 the grade + projected win, row 2 the tags in tinted groups ---- */
+.sig-tile .sig-top { display: flex; flex-wrap: nowrap; align-items: center; gap: 6px; min-height: 24px; }
+.sig-tile .sig-top .sig-proj-r { margin-left: auto !important; }
+.sig-tagrow { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; min-height: 22px; margin: 6px 0 2px; }
+.tg { display: inline-flex; align-items: center; gap: 2px; padding: 1px 5px; border-radius: 7px; font-size: 12px; line-height: 18px; cursor: default;
+  border: 1px solid transparent; }
+.tg-good { background: color-mix(in srgb, var(--pos) 10%, transparent); border-color: color-mix(in srgb, var(--pos) 32%, transparent); }
+.tg-warn { background: color-mix(in srgb, #f59e0b 12%, transparent); border-color: color-mix(in srgb, #f59e0b 45%, transparent); }
+.tg-info { background: color-mix(in srgb, var(--ink) 5%, transparent); border-color: color-mix(in srgb, var(--ink) 14%, transparent); }
+.tg-pill { cursor: help; padding: 0 1px; }
+.tg-pill.tg-word { font-size: 10px; font-weight: 600; }
+.tg-good .tg-word { color: color-mix(in srgb, var(--pos) 80%, var(--ink)); }
+.tg-warn .tg-pill { color: #b45309; } :root[data-mode="dark"] .tg-warn .tg-pill { color: #fbbf24; }
+.tg-warn .tg-pill:not(.tg-word) { font-size: 11px; font-weight: 700; }
+.tg-info .tg-word { color: var(--muted); }
+
+/* a missed limit's battery: the close entry's trade, faded and dashed, so it reads as "had it been taken" */
+.bat-cells.hypo { opacity: .55; }
+.bat-cells.hypo .cell { outline: 1px dashed color-mix(in srgb, var(--ink) 35%, transparent); outline-offset: -1px; }
+
+/* the app-wide tooltip's formatting (tips.js): sections, bold labels, lists, coloured R */
+.tip-text .tt-block + .tt-block { margin-top: 7px; padding-top: 7px; border-top: 1px solid color-mix(in srgb, var(--ink) 10%, transparent); }
+.tip-text .tt-line + .tt-line { margin-top: 3px; }
+.tip-text .tt-lab { color: var(--ink); font-weight: 700; }
+.tip-text .tt-block:first-child .tt-line:first-child .tt-lab { font-size: 13px; }
+.tip-text .tt-bullet { position: relative; padding-left: 12px; }
+.tip-text .tt-bullet::before { content: '•'; position: absolute; left: 2px; color: var(--muted); }
+.tip-text b { color: var(--ink); font-weight: 700; }
+.tip-text .tt-pos { color: var(--pos); font-weight: 600; font-variant-numeric: tabular-nums; }
+.tip-text .tt-neg { color: var(--neg); font-weight: 600; font-variant-numeric: tabular-nums; }
+
+/* the hover tooltip: solid, whatever the theme (themes' cards can be see-through) */
+.tip.tip-text[popover] { background: #fcfbf8; opacity: 1; backdrop-filter: none; -webkit-backdrop-filter: none;
+  border: 1px solid rgb(0 0 0 / .12); box-shadow: 0 10px 30px -6px rgb(0 0 0 / .28), 0 2px 6px rgb(0 0 0 / .08); color: #3a3935; }
+.tip.tip-text[popover] .tt-lab, .tip.tip-text[popover] b { color: #121212; }
+:root[data-mode="dark"] .tip.tip-text[popover] { background: #1d1d20; border-color: rgb(255 255 255 / .12); color: #d6d4cd; box-shadow: 0 12px 34px -6px rgb(0 0 0 / .6); }
+:root[data-mode="dark"] .tip.tip-text[popover] .tt-lab, :root[data-mode="dark"] .tip.tip-text[popover] b { color: #f4f2ec; }

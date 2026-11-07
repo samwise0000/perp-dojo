@@ -466,24 +466,19 @@ export function fullSweep(s, candleAt) {
 export const emaGuard = (g, side, btcAbove) => (g && side === 'Short' && btcAbove ? { ...g, skip: 'ema' } : g);
 export function tierOf(g, { shape = null, full = false, grr = false, btcRsi = null, rr = null, whale = null, zone = false } = {}) {
   if (!g || !A_GRADES.has(g.grade)) return g;
-  // S++: an S+ or S that's also a ⭐ golden R:R and in the ✨ golden zone (BTC's NY pullback). 1 year, 63 pairs,
-  // with the adds: +10.59R a trade on 15 (+4.16R without the best 3), 5 of them 26R+; picked after the fact, so
-  // sized as the A grade under it and forward-tested.
-  // The S route skips S's 🧊 BTC cool-off: the ✨ golden zone already says BTC pulled back from NY's move.
+  // S++: an S+ that's also a ⭐ golden R:R and in the ✨ golden zone (BTC's NY pullback). Picked after the fact
+  // on 1 year, so sized as the A grade under it and forward-tested.
   const t = tierOfBase(g, { shape, full, grr, btcRsi, rr, whale });
-  const viaS = whale === 'absorbed' && (g.grade === 'A' || g.grade === 'A+');
-  if (zone && grr && (t.grade === 'S+' || t.grade === 'S' || viaS)) return { ...t, grade: 'S++', from: g.grade, why: `${t.grade === 'S+' ? t.why : `${g.grade} (${g.why}) with 🐋 whale absorption`}, a ⭐ golden R:R in the ✨ golden zone` };
+  if (zone && grr && t.grade === 'S+') return { ...t, grade: 'S++', why: `${t.why}, in the ✨ golden zone` };
   return t;
 }
 function tierOfBase(g, { shape = null, full = false, grr = false, btcRsi = null, rr = null, whale = null } = {}) {
   if (!g || !A_GRADES.has(g.grade)) return g;
-  if (full && grr) return { ...g, grade: 'S+', from: g.grade, why: `${g.grade} (${g.why}): a full swing failure with a golden R:R` };
-  // S: an A or A+ with 🐋 Whale Absorption (whaleAbsorption). 1 year, plan trades with the adds: +2.61R a trade on 46
-  // (A/A+ without it +0.79R); 10R+ runners 8.7% against 2.9%, but about −0.01R without the best 3 and ~8% odds
-  // of luck, so it's sized as the A grade under it, like S+, and forward-tested.
-  // …and BTC's 1h RSI 🧊 cooled off (35–45 read the trade's way): on the Signals view (wrong time hidden) S with it
-  // made +1.81R on 31 with 5 winners, against 1 winner in 23 with BTC oversold / overbought against the trade.
-  if (whale === 'absorbed' && btcRsi === 'cool' && (g.grade === 'A' || g.grade === 'A+')) return { ...g, grade: 'S', from: g.grade, why: `${g.grade} (${g.why}) with 🐋 whale absorption and 🧊 BTC cooled off` };
+  // S+ (S and S+ merged): an A grade that's a 💥 full swing failure with 🧊 BTC cooled off or a ⭐ golden R:R.
+  // 5 years, 68 pairs, plan trades, winners capped at 10R: +0.53R a trade on 265 (+0.42R without the best 3) vs
+  // −0.10R for full A grades with neither. Longs +0.69R on 197 (latest year +1.50R, years 2–5 +0.07R, under 1%
+  // odds of luck); shorts +0.06R on 68, no better than a plain full A short. Sized as the A grade under it.
+  if (full && (grr || btcRsi === 'cool')) return { ...g, grade: 'S+', from: g.grade, why: `${g.grade} (${g.why}): a full swing failure with ${[btcRsi === 'cool' && 'BTC cooled off', grr && 'a golden R:R'].filter(Boolean).join(' and ')}` };
   if (shape?.engulf) return { ...g, grade: 'C+', from: g.grade, why: `${g.grade} (${g.why}) whose candle ${shape.engulf === 'wick' ? 'closed past the last candle’s wick' : 'engulfed the last candle’s body'}: tracking, a 🪜 ladder 70–90% back` };
   return g;
 }
@@ -684,14 +679,16 @@ export function whaleAbsorption(side, t, { funding = [], taker = [] } = {}) {
 // shown beside it when it has enough history. `tagsOf` lists the tags a signal carries.
 export const WINRATE = { k: 20, damp: 0.7, minCombo: 10, lo: 0.02, hi: 0.9 };
 const logit = p => Math.log(p / (1 - p)), sigm = x => 1 / (1 + Math.exp(-x));
-// tags a grade already stands for (S is the 🐋, S+ the 💥 + ⭐): not counted again on top of it
-const IMPLIED = { S: ['whale:absorbed', 'rsi:cool'], 'S+': ['full', 'grr'], 'S++': ['grr', 'nypull'] };   // an S++ via 🐋 keeps its 🐋 tag counted: it isn't implied by S+'s route
+// tags a grade already stands for (S+ is the 💥; S++ the 💥, ⭐ and ✨): not counted again on top of it
+const IMPLIED = { 'S+': ['full'], 'S++': ['full', 'grr', 'nypull'] };   // S+'s 🧊 / ⭐ stay shown: it needs one or the other
 export function signalTags(s) {
   return rawTags(s).filter(t => !IMPLIED[s.grade?.grade]?.includes(t));
 }
 function rawTags(s) {
   const t = [s.full ? 'full' : 'body'];
   if (s.whale) t.push('whale:' + s.whale.kind);
+  if (s.lean?.on) t.push('lean:' + s.side);
+  if (s.nyx?.at) t.push('nyx:' + s.side);
   if (s.goldenRR) t.push('grr');
   if (s.golden != null) t.push('nypull');
   if (s.btcRsi) t.push('rsi:' + s.btcRsi.kind);
@@ -731,3 +728,128 @@ export function projectWin(s, m) {
   for (const q of parts) { const before = sigm(run); run += q.d; q.pts = (sigm(run) - before) * 100; }
   return { p, grade: { g: s.grade.grade, n: g.n, p: g.p }, parts, combo: m.combos[comboKey(s.grade.grade, signalTags(s))] || null };
 }
+
+// ---- ⚔️ Killzone: tracking only ----
+// A 4h trendline through two wick tips (swing lows under a long, highs over a short) that meets the swept level at
+// the signal candle. The first point is a major swing (the extreme for 15 days either side), 1 to 12 months back; the
+// second a 3-day swing at least 2 weeks later. Neither may be the level's own swing. No wick broke through the line
+// (more than ¼ ATR) since the first point; the price kept off it (more than ¼ ATR) for the 15 candles before the
+// signal; the signal's wick reaches it and it's within ¼ ATR of the level.
+// 5 years, 68 pairs, all graded setups: 3% have one. The line broke (a 4h close through it) within 24h 55% of the
+// time, and the setups made −0.20R a trade vs +0.04R without one; with 🐋 absorbed at a killzone 35 of 43 lost
+// (−0.42R), about the same as killzones without 🐋. Trading
+// the break with the plan's management (long the breakout of a resistance killzone) did better than the same trade
+// elsewhere, in both halves. Grades and sizes don't change: it's a marker to read the chart by.
+export const KILLZONE = { a: 90, b: 18, gap: 84, near: 0.25, tol: 0.25, fresh: 15, minDays: 30, maxDays: 365 };
+const kzPivots = new WeakMap();
+function kzPiv(candles, n, key) {
+  let m = kzPivots.get(candles); if (!m) kzPivots.set(candles, (m = new Map()));
+  const id = n + key; if (m.has(id)) return m.get(id);
+  const out = [];
+  for (let i = n; i < candles.length - n; i++) {
+    let ok = true;
+    for (let j = i - n; j <= i + n && ok; j++) if (j !== i && (key === 'lo' ? candles[j].l <= candles[i].l : candles[j].h >= candles[i].h)) ok = false;
+    if (ok) out.push(i);
+  }
+  m.set(id, out); return out;
+}
+// candles: 4h, oldest first, reaching back a year before `k` (the signal candle). Returns null, or the line:
+// { from: {t, price}, to: {t, price}, at: price at the signal, perCandle, dist (ATRs from the level), days (the line's age) }
+export function killzoneAt(candles, k, side, level, atr, o = KILLZONE) {
+  if (!(atr > 0) || level == null || k < 2 * o.a) return null;
+  const short = side === 'Short', key = short ? 'hi' : 'lo', d = short ? -1 : 1, y = i => (short ? candles[i].h : candles[i].l);
+  const A = kzPiv(candles, o.a, key), B = kzPiv(candles, o.b, key), tk = candles[k].t, tol = o.tol * atr, DAY = 86_400_000;
+  let best = null;
+  for (const p1 of A) {
+    const age = tk - candles[p1].t;
+    if (age > o.maxDays * DAY) continue; if (age < o.minDays * DAY) break;
+    if (Math.abs(y(p1) - level) <= tol) continue;
+    for (const p2 of B) {
+      if (p2 <= p1 + o.gap) continue; if (p2 + o.b >= k) break;
+      if (Math.abs(y(p2) - level) <= tol) continue;
+      const s = (y(p2) - y(p1)) / (p2 - p1), L = i => y(p1) + s * (i - p1), dist = Math.abs(L(k) - level) / atr;
+      if (dist > o.near || (best && dist >= best.dist)) continue;
+      if (o.wick !== false && d * (y(k) - L(k)) > tol) continue;                         // the signal's wick reaches the line (Monitoring skips this: the candle is still forming)
+      let ok = true;
+      for (let i = p1 + 1; i < k && ok; i++) if (d * (y(i) - L(i)) < -tol) ok = false;
+      for (let i = Math.max(p1 + 1, k - o.fresh); i < k && ok; i++) if (d * (y(i) - L(i)) <= tol) ok = false;
+      if (ok) best = { dist, p1, p2, s, L };
+    }
+  }
+  if (!best) return null;
+  const { p1, p2, s, L } = best;
+  return { from: { t: candles[p1].t, price: y(p1) }, to: { t: candles[p2].t, price: y(p2) }, at: L(k), perCandle: s, dist: best.dist, days: Math.round((tk - candles[p1].t) / DAY) };
+}
+
+// ---- ⏳ Late sweep (A++ shorts) and ⚡ Early sweep (A+ longs): tracking only ----
+// When the signal candle's wick first went past the level: the first or the second half of the 4h candle,
+// read from intraday bars (1h or finer: the halves split at 2h). Over 5 years it mattered for two grades only:
+// A++ shorts did better taken late, A+ longs taken early. Elsewhere it made no steady difference.
+export const LATE_TIP = '⏳ Late sweep, on A++ shorts: the wick first went past the high in the last 2 hours of the 4h candle.\nWhy it matters: price took the highs late and was rejected right into the close, with BTC sweeping the same way, so trapped buyers had no time to win the level back.\nRecord: over 5 years (68 pairs), A++ plan shorts like this made +0.71R a trade vs −0.39R when the high went in the first half, and it held in the latest year (+1.25R vs −0.45R) and in years 2–5 (+0.33R vs −0.35R). About 130 trades, so read it as a lean. Tracking only: grades and sizes don’t change.';
+export const EARLY_TIP = '⚡ Early sweep, on A+ longs: the wick first went under the low in the first 2 hours of the 4h candle, and price held back above it for the rest of the candle.\nWhy it matters: buyers defended the level for hours into the close, not just at the last minute.\nRecord: over 5 years (68 pairs), A+ plan longs like this made +1.95R a trade vs +0.24R when the low went in the second half, and it held in the latest year (+4.80R vs +1.56R) and in years 2–5 (+0.30R vs −0.56R). Tracking only: grades and sizes don’t change.';
+// bars: intraday candles covering the 4h candle that starts at t0. → { late, at } (at: the bar that first went past), or null
+export function lateSweep(side, level, t0, bars) {
+  if (!bars?.length) return null;
+  const hit = bars.find(b => b.t >= t0 && b.t < t0 + H4 && (side === 'Short' ? b.h > level : b.l < level));
+  return hit ? { late: hit.t - t0 >= H4 / 2, at: hit.t } : null;
+}
+// which tag, if any: ⏳ 'late' on an A++ short taken late, ⚡ 'early' on an A+ long taken early
+export const sweepTiming = (side, grade) => (side === 'Short' && grade === 'A++' ? 'late' : side === 'Long' && grade === 'A+' ? 'early' : null);
+export function sweepTag(side, grade, ls) {
+  const want = sweepTiming(side, grade);
+  return !want || !ls ? null : want === 'late' ? (ls.late ? 'late' : null) : (ls.late ? null : 'early');
+}
+
+// ---- 🔥 Buyers / Sellers Positioning: tracking only ----
+// The share of market-order (taker) volume on the trade's side, buys for a long, sells for a short, over the
+// 24h (6 candles) to the signal close, ranked against every 24h window in the coin's 30 days before. The top
+// 20% is the tag. Binance 4h taker volume, the same feed as 🐋. `t`: the signal candle's start.
+export const POSITIONING = { window: 6, days: 30, top: 0.8, min: 60 };
+export function positioning(side, t, taker = [], o = POSITIONING) {
+  const W = o.window, n = o.days * 6, k = taker.findIndex(c => c.t === t);
+  if (k < W - 1 + n) return null;
+  const share = (a, b) => { let v = 0, buy = 0; for (let i = a; i < b; i++) { v += taker[i].vol; buy += taker[i].buy; } return v > 0 ? (side === 'Short' ? 1 - buy / v : buy / v) : null; };
+  const now = share(k - W + 1, k + 1); if (now == null) return null;
+  const past = []; for (let s = k - W + 1 - n; s + W <= k - W + 1; s++) { const x = share(s, s + W); if (x != null) past.push(x); }
+  if (past.length < o.min) return null;
+  past.sort((a, b) => a - b);
+  const rank = past.filter(x => x < now).length / past.length;
+  return { on: rank >= o.top, rank, share: now, usual: [past[Math.floor(past.length * 0.2)], past[Math.floor(past.length * 0.8)]] };
+}
+
+// ---- what each tag means, for hovers: what it is, why it matters, its record ----
+export const TAG_TIPS = {
+  full: '💥 Full SFP: the wick ran past the swing candle’s own wick, not just its body, so it took the stops sitting beyond the visible extreme before snapping back.\nWhy it matters: the cleaner the stop run, the more fuel for the reversal.\nRecord: over 5 years, A grades like this (at plan times, EMA100 shorts left out) were positive in every year, +0.55R a trade on 515. It lifts an A grade to S+ with 🧊 BTC cooled or a ⭐ golden R:R.',
+  body: 'Body-only sweep: the wick passed the swing candle’s body but not its full wick, so some stops beyond the extreme are still untouched.\nWhy it matters: a shallower stop run than a 💥 full SFP. It’s the ordinary case, nothing to avoid.',
+  'whale:absorbed': WHALE_TIP + '\nRecord, 5 years, longs (full taker data): all graded −0.18R a trade vs −0.34R without it; plan longs +0.56R vs −0.08R, but that’s mostly the latest year (+1.08R): years 2–5 were −0.40R. So a lean, not an edge. At a ⚔️ killzone 35 of 43 lost, about as bad as killzones without it.',
+  'whale:absorbed:Short': '🐋 Whale Absorption on a short: longs were paying funding (the crowd leaning long), and the sweep candle’s heavy market buying got absorbed: it closed back below the high.\nOn shorts the record is mixed, so it’s shown as neutral, neither a plus nor a warning.\nRecord, 5 years (full taker data): plan shorts +0.11R a trade vs +0.18R without it (100 setups), no clear difference. All graded shorts −0.34R vs −0.09R, but that was years 2–5 (−0.53R); the latest year was +0.03R. Sized as normal. Tracking only.',
+  'whale:crowded': '⚠️ Crowded: your own side is paying heavy funding (over 0.015% per 8h), so the crowd is already in the trade with you.\nWhy it matters: nobody is left on the other side to squeeze, and the ones in it are paying to stay.\nRecord: −0.18R a trade on 19 in the 1-year backtest. Tracking only.',
+  grr: '⭐ Golden R:R: an A grade whose target is 10–20R from the close but within 10 times the coin’s average 4h range.\nWhy it matters: room to pay a lot, while the target is still close enough to be reached.\nRecord: over 5 years, A grades like this made +1.05R a trade (+0.55R without the best 3), positive in 4 of 5 years. Tracking only.',
+  nypull: '✨ Golden zone / NY pullback: at the 12:00 or 16:00 close, BTC has given back part of the last NY session’s move, in the direction this setup trades.\nWhy it matters: BTC has already taken a breather, so the alt isn’t fighting a fresh BTC push.\nRecord: at the 12:00 close, A grades with it made +1.34R a trade in the backtest, those without −0.33R. With an S+ that’s also a ⭐ golden R:R it makes S++. Tracking only.',
+  'rsi:cool': '🧊 BTC cooled off: BTC’s 1h RSI at the close is 35–45 read from this trade’s side (55–65 for a short): it pulled back but didn’t break.\nWhy it matters: the alt is reversing while BTC has room to move its way.\nRecord: A grades at the main closes made +2.90R a trade without the best 3 in the backtest. With a 💥 full SFP it lifts an A grade to S+.',
+  'rsi:chase': '⚠️ BTC already ran: BTC’s 1h RSI at the close is already stretched this trade’s way (60+, or 40 or under for a short).\nWhy it matters: the easy part of BTC’s move is behind it, and a close entry tends to chase.\nPlan: A+, A++, B and C setups take the 🪜 ladder (5 limits 70–90% back toward the wick) instead of the close. Backtest: −0.17R a trade at 60+.',
+  'rsi:deep': '⚠️ BTC oversold / overbought against it: BTC’s 1h RSI is 35 or under against this trade (65+ for a short).\nWhy it matters: BTC is falling hard the other way, and that pullback may be a real turn, not a dip.\nRecord: −0.22R a trade in the backtest. Tracking only.',
+  engulf: '🕯️ Engulf: the signal candle closed past the previous candle’s body or wick, the trade’s way.\nWhy it matters: a strong close, but far from the level, so the stop is wide from the close.\nPlan: the 🪜 ladder, 5 limits 70–90% back toward the wick, instead of chasing the close (on an A, it grades C+, tracking only).',
+  away: '🕯️ Closed away: the signal candle already closed the trade’s way, far from the swept level.\nWhy it matters: taking the close means a wide stop and a smaller R:R.\nPlan: the 🪜 ladder, 5 limits 70–90% back toward the wick, each a fifth of the risk.',
+  ema: '⚠️ EMA100: a short while BTC is above its 4h EMA100.\nWhy it matters: shorting alts in a BTC uptrend fights the tide.\nRecord: over 5 years these shorts lost in every single year (−0.28R a trade across all signals). Shown, but the plan gives it no size and the bot passes.',
+  'trend:aligned': 'Aligned with BTC: BTC’s 4h close is on this trade’s side of its 50 EMA (above for a long, below for a short).\nWhy it matters: the alt and BTC are pulling the same way.',
+  'trend:counter': 'Countertrend: BTC’s 4h close is on the other side of its 50 EMA (below for a long, above for a short).\nWhy it matters: the trade fights BTC’s trend, so reversals tend to be shorter.',
+  'trend:neutral': 'BTC neutral: BTC is within 1% of its 4h 50 EMA, so it has no clear trend either way.',
+  late: LATE_TIP,
+  early: EARLY_TIP,
+  'lean:Long': '🔥 Buyers Positioning: in the 24h before this close, the share of market orders that were buys was in the top 20% of this coin’s last 30 days.\nWhy it matters: buyers were already leaning in before the low was swept, so the sweep shook late sellers out into real demand.\nRecord, 5 years, all graded longs (winners capped at 10R): +0.08R a trade vs −0.34R without it, positive in both the latest year and years 2–5, under 1% odds of luck. More ran to +3R (about 10% vs 6%). Most still lose 1R: it raises the odds of a runner more than the win rate.\nStrongest with a 💥 full SFP (🔱 god tier). Tracking only.',
+  'lean:Short': '🔥 Sellers Positioning: in the 24h before this close, the share of market orders that were sells was in the top 20% of this coin’s last 30 days.\nWhy it matters: sellers were already leaning in before the high was swept, so the sweep trapped late buyers into real supply.\nRecord, 5 years, all graded shorts (winners capped at 10R): +0.37R a trade vs −0.15R without it, on 93 setups (about 5% odds of luck). Tracking only.',
+};
+
+// ---- 🔱 God tier: a label on longs, no size of its own ----
+// 🔱 God tier. Longs: a 💥 full swing failure with 🔥 Buyers Positioning. Shorts: 🔥 Sellers Positioning on an A-grade
+// short (A, A+ or A++ underneath, S+ / C+ included; not the EMA100-skipped ones). 5 years, 68 pairs, all graded
+// shorts, capped at 10R: +1.26R a trade on 38 (+0.51R without the best 3), latest year +0.80R, years 2–5 +1.77R,
+// 4 of 5 years, won 47%; plan trades +2.00R on 21. Out of 102 short tags and pairs tested, the best that held up.
+// g: the grade object ({ grade, from, skip }); only the shorts need it. Sized at least 1% (proposedRisk).
+export const isGodTier = (side, full, lean, g = null) => Boolean(lean?.on) && (side === 'Long' ? Boolean(full) : side === 'Short' && Boolean(g) && g.skip !== 'ema' && A_GRADES.has(g.from ?? g.grade));
+export const godTip = side => (side === 'Short' ? TAG_TIPS['god:Short'] : TAG_TIPS.god);
+TAG_TIPS['nyx:Long'] = '🗽 At NY low: the swept level sits within ¼ ATR of this coin’s low from the previous NY session (8 AM–5 PM ET).\nWhy it matters: the NY low is a level the whole market saw get defended; sweeping it and closing back above takes the stops sitting under it.\nRecord, 5 years, plan trades (winners capped at 10R):\n• Longs at the NY low: won 34%, +0.26R a trade (255) vs 28% elsewhere\n• Shorts at the NY high: won 36%, +0.48R a trade (76) vs 27% elsewhere\nTracking only.';
+TAG_TIPS['nyx:Short'] = TAG_TIPS['nyx:Long'].replace('🗽 At NY low: the swept level sits within ¼ ATR of this coin’s low', '🗽 At NY high: the swept level sits within ¼ ATR of this coin’s high').replace('the NY low is a level the whole market saw get defended; sweeping it and closing back above takes the stops sitting under it', 'the NY high is a level the whole market saw get defended; sweeping it and closing back below takes the stops sitting above it');
+TAG_TIPS.god = '🔱 God tier: a long that’s both a 💥 full swing failure and 🔥 Buyers Positioning.\nWhy it matters: the sweep took every stop below the low while buyers were already leaning in, so trapped sellers ran into real demand.\nRecord, 5 years, all graded longs (winners capped at 10R): +0.39R a trade on 169 (+0.48R even without the 3 best) vs −0.34R without 🔥. Positive in both the latest year and years 2–5, in 4 of 5 years, and about 14% ran to +3R vs 5%. Plan trades +1.06R on 30: A+ +2.40R on 8, A −0.11R on 9. C longs +0.35R on 99.\nSize: at least 1%, whatever the grade or the time (C longs and off-hours included). Still thin: +0.13R a trade on plan trades without the best 3, so it’s forward-tested. Shorts have their own: 🔥 Sellers Positioning on an A-grade short.';
+TAG_TIPS['god:Short'] = '🔱 God tier (short): 🔥 Sellers Positioning on an A-grade short (A, A+ or A++ underneath).\nWhy it matters: sellers were already leaning in before the high was swept, on a setup the NY bias already backs, so the trapped buyers ran into real supply.\nRecord, 5 years, all graded shorts (winners capped at 10R): +1.26R a trade on 38 (+0.51R even without the 3 best) vs −0.13R for all shorts. Positive in the latest year (+0.80R) and years 2–5 (+1.77R), 4 of 5 years, won 47%. Plan trades +2.00R on 21. It was the strongest of 102 short tags and tag pairs tested. Unlike the long one, it doesn’t need a 💥 full SFP.\nSize: at least 1%, whatever the time. About 20 in the latest year (fewer pairs existed earlier).';

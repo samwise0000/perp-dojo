@@ -145,3 +145,33 @@ export function nyFadeAt(candles, close) {
 }
 // Does a setup on `side` fade that move? (a long after a drop, a short after a rally)
 export const fadesNy = (side, fade) => Boolean(fade) && (fade.dir === 'down' ? side === 'Long' : side === 'Short');
+
+// 🗽 At the NY low / high: the swept level sits within ¼ ATR of the coin's previous NY session low (a long) or
+// high (a short), the last weekday 8 AM–5 PM ET session finished by the signal's close. Read from the 4h candles
+// overlapping the session (the 1h answer agrees 92% of the time). 5 years, 68 pairs, plan trades, capped at 10R:
+// longs +0.26R a trade on 255, won 34% (vs −0.08R, 28% elsewhere); shorts +0.48R on 76, won 36% (vs +0.06R, 27%).
+// Tracking only.
+export const NY_EXTREME = { near: 0.25 };
+export function lastNySession(close, hours = NY_HOURS.session, tz = NY_TZ) {
+  const [oh, om] = hours.open.split(':').map(Number), [ch, cm] = hours.close.split(':').map(Number);
+  const [y, m, d] = zonedDate(close, tz);
+  for (let back = 0; back < 10; back++) {
+    const date = new Date(Date.UTC(y, m - 1, d - back)), wd = date.getUTCDay();
+    if (wd === 0 || wd === 6) continue;
+    const [yy, mm, dd] = [date.getUTCFullYear(), date.getUTCMonth() + 1, date.getUTCDate()];
+    const end = zonedToUtc(yy, mm, dd, ch, cm, tz);
+    if (end <= close) return { start: zonedToUtc(yy, mm, dd, oh, om, tz), end };
+  }
+  return null;
+}
+// candles: 4h, by time. → { at, high, low, d } (d in ATR, + = past the extreme) or null without the data
+export function nyExtremeAt(side, level, atr, candles, close, o = NY_EXTREME) {
+  const s = lastNySession(close), H4 = 4 * 3_600_000;
+  if (!s || !(atr > 0)) return null;
+  const byT = candles instanceof Map ? candles : new Map(candles.map(c => [c.t, c]));
+  let high = -Infinity, low = Infinity;
+  for (let t = Math.floor(s.start / H4) * H4; t < s.end; t += H4) { const c = byT.get(t); if (!c || t + H4 > close) continue; high = Math.max(high, c.h); low = Math.min(low, c.l); }
+  if (!Number.isFinite(high)) return null;
+  const d = side === 'Short' ? (level - high) / atr : (low - level) / atr;
+  return { at: Math.abs(d) <= o.near, high, low, d, start: s.start, end: s.end };
+}

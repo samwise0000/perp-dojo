@@ -440,24 +440,20 @@ test('S and C+: an A grade that is a full swing failure with a golden R:R is S; 
   const { tierOf, GRADE_ORDER } = await import('../public/sfp.js');
   const { proposedRisk } = await import('../public/day-playbook.js');
   assert.deepEqual(GRADE_ORDER.slice(0, 6), ['S++', 'S+', 'S', 'A+', 'A++', 'A']);
-  // 💎 S++: an S+ or an S that's also a ⭐ golden R:R in the ✨ golden zone
+  // 💎 S++: an S+ that's also a ⭐ golden R:R in the ✨ golden zone
   assert.equal(tierOf({ grade: 'A', why: 'x' }, { full: true, grr: true, zone: true }).grade, 'S++');
-  assert.equal(tierOf({ grade: 'A+', why: 'x' }, { whale: 'absorbed', btcRsi: 'cool', grr: true, zone: true }).grade, 'S++');
-  assert.equal(tierOf({ grade: 'A+', why: 'x' }, { whale: 'absorbed', btcRsi: 'cool', grr: true, zone: true }).from, 'A+');
-  assert.equal(tierOf({ grade: 'A+', why: 'x' }, { whale: 'absorbed', btcRsi: 'cool', zone: true }).grade, 'S', 'an S without ⭐ stays S');
-  assert.equal(tierOf({ grade: 'A+', why: 'x' }, { whale: 'absorbed', btcRsi: 'deep', grr: true, zone: true }).grade, 'S++', 'S++ via 🐋 skips the cool-off');
-  assert.equal(tierOf({ grade: 'A+', why: 'x' }, { whale: 'absorbed', btcRsi: 'deep', grr: true }).grade, 'A+', 'no golden zone, no cool-off: stays A+');
+  assert.equal(tierOf({ grade: 'A+', why: 'x' }, { full: true, btcRsi: 'cool', grr: true, zone: true }).from, 'A+');
+  assert.equal(tierOf({ grade: 'A+', why: 'x' }, { full: true, btcRsi: 'cool', zone: true }).grade, 'S+', 'S+ via 🧊 without ⭐ stays S+');
+  assert.equal(tierOf({ grade: 'A+', why: 'x' }, { whale: 'absorbed', btcRsi: 'cool', grr: true, zone: true }).grade, 'A+', 'no 💥 full: no S tier, 🐋 or not');
   assert.equal(tierOf({ grade: 'A', why: 'x' }, { full: true, grr: true }).grade, 'S+', 'no golden zone: S+');
   assert.equal(tierOf({ grade: 'A', why: 'x' }, { grr: true, zone: true }).grade, 'A', 'an A with ⭐ and ✨ alone stays A');
-  // 🐋 S: an A or A+ with whale absorption; S+ still wins when both apply; A++ and B stay as they are
-  assert.equal(tierOf({ grade: 'A', why: 'x' }, { whale: 'absorbed', btcRsi: 'cool' }).grade, 'S');
-  assert.equal(tierOf({ grade: 'A', why: 'x' }, { whale: 'absorbed' }).grade, 'A', 'no BTC cool-off: stays A');
-  assert.equal(tierOf({ grade: 'A', why: 'x' }, { whale: 'absorbed', btcRsi: 'deep' }).grade, 'A');
-  assert.equal(tierOf({ grade: 'A+', why: 'x' }, { whale: 'absorbed', btcRsi: 'cool' }).from, 'A+');
-  assert.equal(tierOf({ grade: 'A+', why: 'x' }, { whale: 'absorbed', full: true, grr: true }).grade, 'S+');
-  assert.equal(tierOf({ grade: 'A++', why: 'x' }, { whale: 'absorbed' }).grade, 'A++');
-  assert.equal(tierOf({ grade: 'B', why: 'x' }, { whale: 'absorbed' }).grade, 'B');
-  assert.equal(tierOf({ grade: 'A', why: 'x' }, { whale: 'crowded' }).grade, 'A');
+  // 👑 S+ (S merged in): 💥 full + (🧊 BTC cooled or ⭐ golden R:R), on any A grade, either side
+  assert.equal(tierOf({ grade: 'A', why: 'x' }, { full: true, btcRsi: 'cool' }).grade, 'S+');
+  assert.equal(tierOf({ grade: 'A++', why: 'x' }, { full: true, btcRsi: 'cool' }).grade, 'S+');
+  assert.equal(tierOf({ grade: 'A', why: 'x' }, { full: true, btcRsi: 'deep' }).grade, 'A', 'full alone stays A');
+  assert.equal(tierOf({ grade: 'A', why: 'x' }, { whale: 'absorbed', btcRsi: 'cool' }).grade, 'A', 'no S tier any more');
+  assert.equal(tierOf({ grade: 'B', why: 'x' }, { full: true, btcRsi: 'cool' }).grade, 'B');
+  assert.match(tierOf({ grade: 'A', why: 'x' }, { full: true, btcRsi: 'cool', grr: true }).why, /BTC cooled off and a golden R:R/);
   const a = { grade: 'A++', why: 'with the NY bias ▲, BTC swept too' };
   assert.equal(tierOf(a, { full: true, grr: true }).grade, 'S+');
   assert.equal(tierOf(a, { full: true, grr: true }).from, 'A++');
@@ -465,14 +461,14 @@ test('S and C+: an A grade that is a full swing failure with a golden R:R is S; 
   assert.equal(tierOf(ap, { btcRsi: 'cool', rr: 12 }).grade, 'A+');                         // BTC cooled off is a tag (🧊), not a tier
   assert.equal(tierOf(a, { btcRsi: 'cool', rr: 12 }).grade, 'A++');                         // only A+
   assert.equal(tierOf(ap, { btcRsi: 'cool', rr: 12, full: true, grr: true }).grade, 'S+'); // both: S+
-  assert.equal(tierOf(a, { full: true, grr: false }), a);                                   // needs both
+  assert.equal(tierOf(a, { full: true, grr: false }), a);                                   // full needs 🧊 or ⭐
   assert.equal(tierOf(a, { shape: { away: true, engulf: 'body' } }).grade, 'C+');            // an engulf: tracking
   assert.equal(tierOf(a, { shape: { away: true, engulf: 'body' }, full: true, grr: true }).grade, 'S+');   // S+ comes first
   assert.equal(tierOf({ grade: 'B', why: '' }, { full: true, grr: true }).grade, 'B');      // only A grades
   const tue12 = new Date(2026, 10, 3, 12).getTime();
   assert.equal(proposedRisk('S+', tue12, { from: 'A++' }).pct, proposedRisk('A++', tue12).pct);
   assert.equal(proposedRisk('C+', tue12, { from: 'A' }).pct, 0);
-  assert.equal(proposedRisk('S', new Date(2026, 10, 7, 12).getTime(), { from: 'A' }).pct, 0);   // Saturday: skip, like its A
+  assert.equal(proposedRisk('S+', new Date(2026, 10, 7, 12).getTime(), { from: 'A' }).pct, 0);   // Saturday: skip, like its A
 });
 
 test('emaGuard: a short while BTC is above its 4h EMA100 is marked and gets no size', async () => {
@@ -621,4 +617,91 @@ test('🪜 the ladder entry: every closed-away candle, and A+ / A++ / B / C when
   for (const g of ['A', 'S', 'S+', 'S++', 'B+']) assert.equal(ladderWhy(g, 'chase', at), null, g);
   assert.equal(ladderWhy('A+', 'cool', at), null);
   assert.equal(ladderWhy('A+', 'chase', null), null);
+});
+
+test('killzoneAt: a rising line through two wick tips meeting the level at the signal', async () => {
+  const { killzoneAt, atrAt } = await import('../public/sfp.js');
+  const H = 4 * 3_600_000, L = i => 50 + 0.01 * i, k = 1100;
+  // lows sit 5 above the line, except the two wick tips (200, 700) and the signal candle, which touch it
+  const C = Array.from({ length: 1200 }, (_, i) => { const l = [200, 700, k].includes(i) ? L(i) : L(i) + 5; return { t: i * H, o: l + 1, h: l + 2, l, c: l + 1 }; });
+  const level = L(k) + 0.1, z = killzoneAt(C, k, 'Long', level, atrAt(C, k));
+  assert.ok(z, 'found');
+  assert.equal(z.from.t, 200 * H); assert.equal(z.to.t, 700 * H);
+  assert.ok(Math.abs(z.at - L(k)) < 1e-9);
+  // price hugging the line in the 15 candles before: not a killzone
+  const hug = C.map((c, i) => (i > k - 10 && i < k ? { ...c, l: L(i) + 0.05, o: L(i) + 1, c: L(i) + 1 } : c));
+  assert.equal(killzoneAt(hug, k, 'Long', level, atrAt(hug, k)), null);
+  // the level far from the line: none
+  assert.equal(killzoneAt(C, k, 'Long', L(k) + 3, atrAt(C, k)), null);
+});
+
+test('lateSweep: from the hour the wick first went past the level', async () => {
+  const { lateSweep } = await import('../public/sfp.js');
+  const H = 3_600_000, t0 = 1_000 * 4 * H, bar = (i, h) => ({ t: t0 + i * H, o: 1, h, l: 0.9, c: 1 });
+  assert.deepEqual(lateSweep('Short', 10, t0, [bar(0, 9), bar(1, 9.5), bar(2, 10.5), bar(3, 11)]), { late: true, at: t0 + 2 * H });
+  assert.deepEqual(lateSweep('Short', 10, t0, [bar(0, 9), bar(1, 10.2), bar(2, 10.5), bar(3, 9)]), { late: false, at: t0 + H });
+  assert.deepEqual(lateSweep('Long', 1, t0, [bar(0, 2), bar(1, 2)].map(b => ({ ...b, l: 0.5 }))), { late: false, at: t0 });
+  const { sweepTag } = await import('../public/sfp.js');
+  assert.equal(sweepTag('Short', 'A++', { late: true }), 'late'); assert.equal(sweepTag('Short', 'A+', { late: true }), null);
+  assert.equal(sweepTag('Long', 'A+', { late: false }), 'early'); assert.equal(sweepTag('Long', 'A+', { late: true }), null);
+  assert.equal(lateSweep('Short', 10, t0, [bar(0, 9), bar(4, 12)]), null);      // past the level only after the candle
+});
+
+test('positioning: the 24h taker share the trade’s way, ranked against 30 days', async () => {
+  const { positioning } = await import('../public/sfp.js');
+  const tk = Array.from({ length: 200 }, (_, i) => ({ t: i * H4, vol: 100, buy: 48 + (i % 5) }));      // 48–52% buys
+  for (let i = 194; i < 200; i++) tk[i].buy = 60;                                                  // the last 24h: 60%
+  const L = positioning('Long', 199 * H4, tk), S = positioning('Short', 199 * H4, tk);
+  assert.equal(L.on, true); assert.equal(L.rank, 1); assert.ok(Math.abs(L.share - 0.6) < 1e-9);
+  assert.equal(S.on, false); assert.equal(S.rank, 0);
+  assert.equal(positioning('Long', 100 * H4, tk), null);                                          // not 30 days of history yet
+});
+
+test('isGodTier: longs 💥 + 🔥 buyers, shorts 🔥 sellers on an A grade', async () => {
+  const { isGodTier } = await import('../public/sfp.js');
+  assert.equal(isGodTier('Long', true, { on: true }), true);
+  assert.equal(isGodTier('Short', true, { on: true }), false, 'a short needs its grade');
+  // shorts: 🔥 sellers on an A-grade short, full or not; not the EMA100-skipped ones
+  assert.equal(isGodTier('Short', false, { on: true }, { grade: 'A+' }), true);
+  assert.equal(isGodTier('Short', false, { on: true }, { grade: 'S+', from: 'A' }), true);
+  assert.equal(isGodTier('Short', false, { on: true }, { grade: 'C+', from: 'A++' }), true);
+  assert.equal(isGodTier('Short', true, { on: true }, { grade: 'B' }), false);
+  assert.equal(isGodTier('Short', true, { on: true }, { grade: 'C' }), false);
+  assert.equal(isGodTier('Short', false, { on: false }, { grade: 'A' }), false);
+  assert.equal(isGodTier('Short', false, { on: true }, { grade: 'A', skip: 'ema' }), false);
+  assert.equal(isGodTier('Long', true, { on: true }, { grade: 'C' }), true, 'longs: any grade');
+  assert.equal(isGodTier('Long', false, { on: true }), false);
+  assert.equal(isGodTier('Long', true, { on: false }), false);
+  assert.equal(isGodTier('Long', true, null), false);
+});
+
+
+test('🔱 god tier: at least full plan size whatever the grade or time', async () => {
+  const { proposedRisk, GOD_PCT } = await import('../public/day-playbook.js');
+  const tue12 = new Date(2026, 10, 3, 12).getTime(), sat12 = new Date(2026, 10, 7, 12).getTime();
+  assert.equal(proposedRisk('C', tue12).pct, 0);
+  assert.equal(proposedRisk('C', tue12, { god: true }).pct, GOD_PCT, 'a C long with 🔱 gets sized');
+  assert.equal(proposedRisk('A', sat12, { god: true }).pct, GOD_PCT, 'wrong time too');
+  assert.equal(proposedRisk('A', tue12, { god: true }).pct, Math.max(GOD_PCT, proposedRisk('A', tue12).pct));
+  assert.ok(proposedRisk('A+', tue12, { god: true }).pct >= proposedRisk('A+', tue12).pct, 'never less than the grade');
+  assert.match(proposedRisk('C', tue12, { god: true }).why, /🔱/);
+});
+
+test('🗽 nyExtremeAt: the level vs the previous NY session’s low / high, from 4h candles', async () => {
+  const { nyExtremeAt, lastNySession } = await import('../public/bias.js');
+  const H4 = 4 * 3_600_000;
+  // Wed 2026-11-04: NY session 08:00–17:00 ET = 13:00–22:00 UTC
+  const s = lastNySession(Date.UTC(2026, 10, 5, 4));
+  assert.equal(new Date(s.start).toISOString(), '2026-11-04T13:00:00.000Z');
+  assert.equal(new Date(s.end).toISOString(), '2026-11-04T22:00:00.000Z');
+  const c = [12, 16, 20].map((h, i) => ({ t: Date.UTC(2026, 10, 4, h), h: 110 + i, l: 100 - i, o: 0, c: 0 }));
+  const close = Date.UTC(2026, 10, 5, 4);
+  const L = nyExtremeAt('Long', 98.1, 1, c, close);
+  assert.equal(L.low, 98); assert.equal(L.at, true);
+  assert.equal(nyExtremeAt('Long', 97, 1, c, close).at, false, '1 ATR below');
+  const S = nyExtremeAt('Short', 112.2, 1, c, close);
+  assert.equal(S.high, 112); assert.equal(S.at, true);
+  // a weekend close looks back to Friday
+  assert.equal(new Date(lastNySession(Date.UTC(2026, 10, 8, 12)).start).getUTCDay(), 5);
+  assert.equal(nyExtremeAt('Long', 100, 0, c, close), null, 'no ATR');
 });

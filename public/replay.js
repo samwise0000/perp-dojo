@@ -89,6 +89,7 @@ export function openReplay(t, list, ctx) {
     if (e.key === 'ArrowLeft') { e.preventDefault(); step(-1); }
     if (e.key === 'ArrowRight') { e.preventDefault(); step(1); }
   };
+  dlg.classList.toggle('compact', Boolean(ctx.compact));     // the Monitoring tab's: a little smaller
   if (!dlg.open) dlg.showModal();
   show();
 }
@@ -111,9 +112,9 @@ async function show() {
   $('#replayNext').disabled = i >= list.length - 1;
   $('.replay-nav').hidden = list.length < 2;
   // signals step oldest to newest, with a counter; trades keep the order of the table they came from
-  $('#replayPrev').textContent = t.view ? '‹ Older' : '‹ Previous trade';
-  $('#replayNext').textContent = t.view ? 'Newer ›' : 'Next trade ›';
-  $('#rpCount').textContent = t.view && list.length > 1 ? `Signal ${i + 1} of ${list.length}` : '';
+  $('#replayPrev').textContent = ctx.nav?.prev ?? (t.view ? '‹ Older' : '‹ Previous trade');
+  $('#replayNext').textContent = ctx.nav?.next ?? (t.view ? 'Newer ›' : 'Next trade ›');
+  $('#rpCount').textContent = t.view && list.length > 1 ? (ctx.nav?.count ? ctx.nav.count(i + 1, list.length) : `Signal ${i + 1} of ${list.length}`) : '';
   // notes and tags belong to closed trades; the page fills this panel
   const notes = $('#rpNotes');
   notes.hidden = !!t.open || !!t.view || !ctx.notes;
@@ -219,7 +220,7 @@ async function show() {
     };
     // shaded zones between two prices over a span of candles: the stop and target of a trade
     for (const b of t.view.boxes || []) {
-      const fill = alpha(color(b.color), 0.16);
+      const fill = alpha(color(b.color), b.alpha ?? 0.16);
       const zone = chart.addBaselineSeries({
         baseValue: { type: 'price', price: b.base }, lineWidth: 1, topLineColor: 'transparent', bottomLineColor: 'transparent',
         topFillColor1: fill, topFillColor2: fill, bottomFillColor1: fill, bottomFillColor2: fill,
@@ -242,6 +243,15 @@ async function show() {
           lead.setData([{ time: local(side.to), value: l.price }, { time: local(lastT + (SIDE.gap + SIDE.width + SIDE.tail) * iv.ms), value: l.price }]);
         }
       } else series.createPriceLine({ price: l.price, color: color(l.color), lineWidth: 1, lineStyle: LW.LineStyle.Dotted, axisLabelVisible: true, title: l.title || '' });
+    }
+    // sloped lines through two points (a ⚔️ killzone trendline), clipped to the candles on the chart
+    for (const tl of t.view.trendlines || []) {
+      const per = (tl.to.price - tl.from.price) / (tl.to.t - tl.from.t), at = x => tl.from.price + per * (x - tl.from.t);
+      const a = Math.max(tl.from.t, cs[0].t), z = Math.min(tl.end ?? lastT, lastT);
+      if (!(z > a)) continue;
+      const ln = chart.addLineSeries({ color: color(tl.color || 'ink'), lineWidth: 2, lineStyle: LW.LineStyle.Dotted, lastValueVisible: false, priceLineVisible: false, crosshairMarkerVisible: false,
+        priceFormat: { type: 'price', precision: decimals(cs), minMove: 10 ** -decimals(cs) } });
+      ln.setData([{ time: snap(a), value: at(Math.floor(a / iv.ms) * iv.ms) }, { time: snap(z), value: at(Math.floor(z / iv.ms) * iv.ms) }]);
     }
   }
   else if (Number.isFinite(t.openedAt)) marks.push({ time: snap(t.openedAt), position: long ? 'belowBar' : 'aboveBar', color: entryC, shape: long ? 'arrowUp' : 'arrowDown', size: 1.4,
@@ -284,7 +294,7 @@ async function show() {
     ['Best price in trade', `${f.price(x.favPrice)} · ${(x.fav * 100).toFixed(2)}% in your favor`, 'pos'],
     ['Worst price in trade', `${f.price(x.advPrice)} · ${(x.adv * 100).toFixed(2)}% against you`, 'neg'],
   ]);
-  if (t.view) { note.textContent = `${t.view.note} ${iv.label} candles from Bybit, in your local time.` + (list.length > 1 ? ' Use ← → for older and newer signals.' : ''); return; }
+  if (t.view) { note.textContent = `${t.view.note} ${iv.label} candles from Bybit, in your local time.` + (list.length > 1 ? (state.ctx.nav ? ' Use ← → to step through the cards.' : ' Use ← → for older and newer signals.') : ''); return; }
   note.textContent = (t.open ? (Number.isFinite(t.openedAt) ? 'Still open: the chart runs to now. ' : 'Opened over 7 days ago, so the entry isn’t marked. ') : Number.isFinite(t.openedAt) ? '' : 'The open isn’t in your pulled fills, so only the close is marked. ') +
     `${iv.label} candles from Bybit, last price. Times are your local time. Best and worst prices are from candle highs and lows, so they're approximate.` + (list.length > 1 ? ' Use ← → to step through trades.' : '');
 }
